@@ -57,7 +57,7 @@ class SegmentationMetrics:
             precision_list.append(precision)
 
             name = self.class_names[c] if c < len(self.class_names) else f"class_{c}"
-            metrics[f"{name}_F1"]          = float(dice)
+            metrics[f"{name}_Dice"]          = float(dice)
             metrics[f"{name}_IoU"]         = float(iou)
             metrics[f"{name}_Sensitivity"] = float(sensitivity)
             metrics[f"{name}_Specificity"] = float(specificity)
