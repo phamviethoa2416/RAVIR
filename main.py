@@ -3,8 +3,10 @@ import time
 import argparse
 from datetime import datetime
 
+import numpy as np
 import torch
 import torch.optim as optim
+from sklearn.model_selection import KFold
 from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
 
@@ -92,23 +94,15 @@ def train(args):
 
     all_files = sorted(os.listdir(Config.TRAIN_IMG_DIR))
     logger.info(f"Total training images: {len(all_files)}")
+    kf = KFold(n_splits=Config.NUM_FOLDS, shuffle=True, random_state=Config.SEED)
+    folds = list(kf.split(all_files))
+    train_idx, val_idx = folds[Config.VAL_FOLD]
+    train_files = [all_files[i] for i in train_idx]
+    val_files = [all_files[i] for i in val_idx]
 
-    import random
-    random.seed(Config.SEED)
-    indices = list(range(len(all_files)))
-    random.shuffle(indices)
-
-    num_val = 4
-    val_indices = indices[:num_val]
-    train_indices = indices[num_val:]
-
-    val_files = [all_files[i] for i in val_indices]
-    train_files = [all_files[i] for i in train_indices]
-
-    logger.info(f"Train set: {len(train_files)} images")
-    logger.info(f"Val set:   {len(val_files)} images")
-    logger.info(f"Train files: {train_files}")
-    logger.info(f"Val files:   {val_files}")
+    logger.info(f"Total images : {len(all_files)}")
+    logger.info(f"Train set    : {len(train_files)} images")
+    logger.info(f"Val set      : {len(val_files)}   images")
 
     train_dataset = RAVIRDataset(
         img_dir=Config.TRAIN_IMG_DIR,
@@ -168,10 +162,11 @@ def train(args):
         weight_decay=Config.WEIGHT_DECAY,
     )
 
-    scheduler = optim.lr_scheduler.StepLR(
+    scheduler = optim.lr_scheduler.CosineAnnealingWarmRestarts(
         optimizer,
-        step_size=Config.LR_DECAY_EVERY_N_EPOCHS,
-        gamma=Config.LR_DECAY_FACTOR,
+        T_0=Config.COSINE_T0,
+        T_mult=Config.COSINE_T_MULT,
+        eta_min=1e-6,
     )
 
     metrics_calc = SegmentationMetrics(Config.NUM_CLASSES)
@@ -212,12 +207,6 @@ def train(args):
             Config.DEVICE, grad_accum_steps=Config.GRAD_ACCUMULATION_STEPS,
             class_weights=static_weights
         )
-
-        if Config.USE_DYNAMIC_WEIGHTS:
-            # Dynamic weights are handled inside CombinedLoss if passed, 
-            # but wait, trainer.py passes class_weights to criterion.
-            # Let's check CombinedLoss again.
-            pass
 
         val_loss, metrics = validate(
             model, val_loader, criterion, Config.DEVICE, metrics_calc,

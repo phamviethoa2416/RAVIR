@@ -28,18 +28,20 @@ class Config:
     DROPOUT_RATE = 0.1  # dropout probability
 
     # ── Training ───────────────────────────────────────────────────────────────
-    BATCH_SIZE = 6  # mini batch size
+    BATCH_SIZE = 8  # mini batch size
     GRAD_ACCUMULATION_STEPS = 1  # effective batch
     EPOCHS = 600  # total training epochs
+    NUM_FOLDS = 5 # number of folds for k-fold cross-validation
+    VAL_FOLD = 0
 
     # ── Optimizer (Adam) ───────────────────────────────────────────────────────
-    LEARNING_RATE = 1e-3  # initial LR
+    LEARNING_RATE = 3e-4  # initial LR
     WEIGHT_DECAY = 1e-3  # L2 regularization for Adam
 
-    # ── LR Scheduler (Step Decay) ──────────────────────────────────────────────
-    LR_SCHEDULER = "step_decay"  # reduce LR by factor every N epochs
-    LR_DECAY_FACTOR = 0.5  # LR ×0.5 per step
-    LR_DECAY_EVERY_N_EPOCHS = 50  # decay interval in epochs
+    # ── LR Scheduler (Cosine Annealing with Warm Restarts) ──────────────────────────────────────────────
+    LR_SCHEDULER = "cosine_warm_restarts"  # reduce LR by factor every N epochs
+    COSINE_T0 = 50  # first restart cycle length
+    COSINE_T_MULT = 2 # each subsequent cycle doubles
 
     # ── Early Stopping ─────────────────────────────────────────────────────────
     EARLY_STOPPING_PATIENCE = 150  # stop if no improvement for N epochs (25% of total)
