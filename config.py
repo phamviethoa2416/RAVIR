@@ -2,6 +2,7 @@ import os
 import sys
 import torch
 
+
 class Config:
     # ── Paths ──────────────────────────────────────────────────────────────────
     DATA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data")
@@ -46,11 +47,6 @@ class Config:
     # ── Loss Function Weights  ────────────────────────────────────────
     DICE_WEIGHT = 1.0  # weight for Dice loss term
     CE_WEIGHT = 1.0  # weight for Cross-Entropy loss term
-    REGULARIZATION_WEIGHT = 0.001  # weight for auxiliary/regularization term
-
-    # ── Loss Function Weights ────────────────────────────────────────
-    TAU = 3  # threshold / temperature parameter
-    LAMBDA_D = 0.1  # weight for discriminator/distance loss term
 
     # ── Class Imbalance Handling ───────────────────────────────────────────────
     USE_DYNAMIC_WEIGHTS = True  # recompute class weights per batch

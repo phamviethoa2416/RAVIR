@@ -7,11 +7,6 @@ from torch.utils.data import Dataset
 
 from config import Config
 
-_PIXEL_TO_CLASS = {v: k for k, v in {
-    0:   0,   # background
-    128: 1,   # artery
-    255: 2,   # vein
-}.items()}
 
 def mask_to_class(mask_np: np.ndarray) -> np.ndarray:
     class_mask = np.zeros_like(mask_np, dtype=np.int32)
@@ -24,11 +19,12 @@ def mask_to_class(mask_np: np.ndarray) -> np.ndarray:
 
     return class_mask
 
+
 def compute_class_weights(
-    mask_dir : str,
-    file_list: list,
-    min_weight: float = 1.0,
-    max_weight: float = 10.0,
+        mask_dir: str,
+        file_list: list,
+        min_weight: float = 1.0,
+        max_weight: float = 10.0,
 ) -> torch.Tensor:
     class_counts = np.zeros(Config.NUM_CLASSES, dtype=np.float64)
 
@@ -46,6 +42,7 @@ def compute_class_weights(
     weights = np.clip(weights, a_min=min_weight, a_max=max_weight)
 
     return torch.tensor(weights, dtype=torch.float32)
+
 
 class RAVIRDataset(Dataset):
     def __init__(

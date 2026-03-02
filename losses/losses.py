@@ -2,19 +2,20 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+
 class DiceLoss(nn.Module):
     def __init__(self, num_classes: int = 3, smooth: float = 1.0):
         super().__init__()
         self.num_classes = num_classes
-        self.smooth      = smooth
+        self.smooth = smooth
 
     def forward(self, inputs: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
         probs = F.softmax(inputs, dim=1)
 
         one_hot = (
             F.one_hot(targets.long(), self.num_classes)
-             .permute(0, 3, 1, 2)
-             .float()
+            .permute(0, 3, 1, 2)
+            .float()
         )
 
         intersection = (probs * one_hot).sum(dim=(2, 3))
@@ -23,6 +24,7 @@ class DiceLoss(nn.Module):
         dice_loss = (1.0 - dice).mean()
 
         return dice_loss
+
 
 class CombinedLoss(nn.Module):
     def __init__(

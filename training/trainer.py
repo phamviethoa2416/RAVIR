@@ -5,27 +5,30 @@ from tqdm import tqdm
 from config import Config
 from metrics import SegmentationMetrics
 
+
 def _compute_batch_weights(masks: torch.Tensor, num_classes: int) -> torch.Tensor:
     counts = torch.zeros(num_classes, dtype=torch.float32)
-    total  = masks.numel()
+    total = masks.numel()
 
     for c in range(num_classes):
         counts[c] = (masks == c).sum().float()
 
-    freq        = counts / (total + 1e-6)
+    freq = counts / (total + 1e-6)
     median_freq = freq.median()
-    weights     = median_freq / (freq + 1e-6)
-    weights     = weights.clamp(min=1.0, max=10.0)
+    weights = median_freq / (freq + 1e-6)
+    weights = weights.clamp(min=1.0, max=10.0)
 
     return weights
 
+
 def train_one_epoch(
-    model,
-    loader,
-    criterion       : nn.Module,
-    optimizer,
-    device          : str,
-    grad_accum_steps: int = 1,
+        model,
+        loader,
+        criterion: nn.Module,
+        optimizer,
+        device: str,
+        grad_accum_steps: int = 1,
+        class_weights: torch.Tensor = None,
 ) -> float:
     model.train()
 
@@ -42,13 +45,14 @@ def train_one_epoch(
         output = model(images)
         logits = output[0] if isinstance(output, (tuple, list)) else output
 
-        class_weights = None
         if Config.USE_DYNAMIC_WEIGHTS:
-            class_weights = _compute_batch_weights(
+            batch_weights = _compute_batch_weights(
                 masks, Config.NUM_CLASSES
             ).to(device)
+        else:
+            batch_weights = class_weights.to(device) if class_weights is not None else None
 
-        loss, components = criterion(logits, masks, class_weights=class_weights)
+        loss = criterion(logits, masks, class_weights=batch_weights)
         loss_scaled = loss / grad_accum_steps
 
         loss_scaled.backward()
@@ -63,12 +67,13 @@ def train_one_epoch(
 
     return running_loss / max(num_batches, 1)
 
+
 def sliding_window_inference(
-    model      ,
-    image      : torch.Tensor,
-    tile_size  : int = 256,
-    overlap    : int = 64,
-    num_classes: int = 3,
+        model,
+        image: torch.Tensor,
+        tile_size: int = 256,
+        overlap: int = 64,
+        num_classes: int = 3,
 ) -> torch.Tensor:
     _, C, H, W = image.shape
     stride = tile_size - overlap
@@ -114,13 +119,15 @@ def sliding_window_inference(
     logits_full = logit_sum / weight_sum.clamp(min=1e-6)
     return logits_full[:, :, :H, :W]
 
+
 @torch.no_grad()
 def validate(
-    model              ,
-    loader             ,
-    criterion          : nn.Module,
-    device             : str,
-    metrics_calculator : SegmentationMetrics,
+        model,
+        loader,
+        criterion: nn.Module,
+        device: str,
+        metrics_calculator: SegmentationMetrics,
+        class_weights: torch.Tensor = None,
 ) -> tuple[float, dict]:
     model.eval()
     metrics_calculator.reset()
@@ -146,7 +153,7 @@ def validate(
             all_logits.append(tile_logits)
         logits = torch.cat(all_logits, dim=0)
 
-        loss = criterion(logits, masks)
+        loss = criterion(logits, masks, class_weights=class_weights)
 
         running_loss += loss.item()
         num_batches += 1

@@ -4,6 +4,7 @@ from albumentations.pytorch import ToTensorV2
 
 from config import Config
 
+
 def get_train_transform() -> alb.Compose:
     return alb.Compose([
         # Patch extraction
@@ -45,6 +46,7 @@ def get_train_transform() -> alb.Compose:
         alb.Normalize(mean=(0.5,), std=(0.5,), max_pixel_value=255.0),
         ToTensorV2(),
     ])
+
 
 def get_val_transform() -> alb.Compose:
     return alb.Compose([

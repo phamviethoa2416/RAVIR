@@ -17,6 +17,7 @@ from transform import get_val_transform, get_train_transform
 from transform.ravir import RAVIRDataset
 from utils import set_seed, set_logging, visualize_predictions, plot_training_curves
 
+
 def parse_args():
     parser = argparse.ArgumentParser(description="Enhanced ResUNet (CE+Dice) - RAVIR Vessel Segmentation")
     parser.add_argument("--epochs", type=int, default=Config.EPOCHS)
@@ -24,14 +25,15 @@ def parse_args():
     parser.add_argument("--lr", type=float, default=Config.LEARNING_RATE)
     parser.add_argument("--img-size", type=int, default=Config.IMG_SIZE)
     parser.add_argument("--grad-accum", type=int, default=Config.GRAD_ACCUMULATION_STEPS,
-                   help="Gradient accumulation steps")
+                        help="Gradient accumulation steps")
     parser.add_argument("--output-dir", type=str, default=Config.OUTPUT_DIR)
     parser.add_argument("--resume", type=str, default=None,
-                   help="Path to checkpoint to resume from")
+                        help="Path to checkpoint to resume from")
     parser.add_argument("--summary", action="store_true",
-                   help="Print model summary and exit")
+                        help="Print model summary and exit")
 
     return parser.parse_args()
+
 
 def summary():
     model = UNet(
@@ -56,6 +58,7 @@ def summary():
     print(f"  Input  shape : {tuple(dummy.shape)}")
     print(f"  Output shape : {tuple(output.shape)}")
     print("=" * 60)
+
 
 def train(args):
     set_seed(Config.SEED)
@@ -341,6 +344,7 @@ def train(args):
         epoch=999, num_samples=len(val_files),
     )
     return best_dice, final
+
 
 if __name__ == "__main__":
     args = parse_args()

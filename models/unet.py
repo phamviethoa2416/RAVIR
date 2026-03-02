@@ -2,6 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+
 class ConvBlock(nn.Module):
     def __init__(self, in_channels: int, out_channels: int, dropout_rate: float = 0.0):
         super().__init__()
@@ -19,6 +20,7 @@ class ConvBlock(nn.Module):
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         return self.block(x)
 
+
 class Encoder(nn.Module):
     def __init__(self, in_channels: int, out_channels: int, dropout_rate: float = 0.0):
         super().__init__()
@@ -29,6 +31,7 @@ class Encoder(nn.Module):
         features = self.conv(x)
         downsampled = self.pool(features)
         return features, downsampled
+
 
 class Decoder(nn.Module):
     def __init__(self, in_channels: int, skip_channels: int, out_channels: int, dropout_rate: float = 0.0):
@@ -47,6 +50,7 @@ class Decoder(nn.Module):
 
         x = torch.cat([skip, x], dim=1)
         return self.conv(x)
+
 
 class UNet(nn.Module):
     def __init__(
