@@ -3,14 +3,16 @@ import os
 import numpy as np
 import torch
 import matplotlib
+
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
 COLOR_MAP = {
-    0: [0,   0,   0  ],
-    1: [255, 0,   0  ],
-    2: [0,   0,   255],
+    0: [0, 0, 0],
+    1: [255, 0, 0],
+    2: [0, 0, 255],
 }
+
 
 def _class_mask_to_rgb(mask: np.ndarray) -> np.ndarray:
     rgb = np.zeros((*mask.shape, 3), dtype=np.uint8)
@@ -18,13 +20,14 @@ def _class_mask_to_rgb(mask: np.ndarray) -> np.ndarray:
         rgb[mask == cls] = color
     return rgb
 
+
 def visualize_predictions(
-    model,
-    loader,
-    device,
-    output_dir : str,
-    epoch      : int,
-    num_samples: int = 3,
+        model,
+        loader,
+        device,
+        output_dir: str,
+        epoch: int,
+        num_samples: int = 3,
 ):
     model.eval()
     os.makedirs(output_dir, exist_ok=True)
@@ -72,13 +75,14 @@ def visualize_predictions(
                 plt.close(fig)
                 saved += 1
 
+
 def plot_training_curves(
-    train_losses : list,
-    val_losses   : list,
-    val_dices    : list,
-    output_dir   : str,
-    val_f1_artery: list = None,
-    val_f1_vein  : list = None,
+        train_losses: list,
+        val_losses: list,
+        val_dices: list,
+        output_dir: str,
+        val_f1_artery: list = None,
+        val_f1_vein: list = None,
 ):
     epochs = range(1, len(train_losses) + 1)
     has_perclass = val_f1_artery is not None and val_f1_vein is not None
