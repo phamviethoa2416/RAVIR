@@ -60,3 +60,79 @@ class CombinedLoss(nn.Module):
         dice = self.dice_loss(logits, targets)
 
         return self.ce_weight * ce + self.dice_weight * dice
+
+
+class TverskyLoss(nn.Module):
+    def __init__(
+            self,
+            num_classes: int = 3,
+            alpha: float = 0.3,
+            beta: float = 0.7,
+            smooth: float = 1.0,
+    ):
+        super().__init__()
+        self.num_classes = num_classes
+        self.alpha = alpha
+        self.beta = beta
+        self.smooth = smooth
+
+    def forward(self, inputs: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
+        probs = F.softmax(inputs, dim=1)
+
+        one_hot = (
+            F.one_hot(targets.long(), self.num_classes)
+            .permute(0, 3, 1, 2)
+            .float()
+        )
+
+        tp = (probs * one_hot).sum(dim=(2, 3))
+        fp = (probs * (1 - one_hot)).sum(dim=(2, 3))
+        fn = ((1 - probs) * one_hot).sum(dim=(2, 3))
+
+        tversky = (tp + self.smooth) / (tp + self.alpha * fp + self.beta * fn + self.smooth)
+        tversky_loss = 1 - tversky.mean()
+
+        return tversky_loss
+
+
+class TverskyCELoss(nn.Module):
+    def __init__(
+            self,
+            num_classes: int = 3,
+            tversky_weight: float = 0.7,
+            ce_weight: float = 0.3,
+            tversky_alpha: float = 0.3,
+            tversky_beta: float = 0.7,
+            smooth: float = 1.0,
+            label_smoothing: float = 0.1,
+    ):
+        super().__init__()
+        self.tversky_weight = tversky_weight
+        self.ce_weight = ce_weight
+
+        self.tversky_loss = TverskyLoss(
+            num_classes=num_classes,
+            alpha=tversky_alpha,
+            beta=tversky_beta,
+            smooth=smooth,
+        )
+        self.ce_loss = nn.CrossEntropyLoss(label_smoothing=label_smoothing)
+        self.label_smoothing = label_smoothing
+
+    def forward(
+            self,
+            logits: torch.Tensor,
+            targets: torch.Tensor,
+            class_weights: torch.Tensor = None,
+    ) -> torch.Tensor:
+        if class_weights is not None:
+            ce = nn.CrossEntropyLoss(
+                weight=class_weights.to(logits.device),
+                label_smoothing=self.label_smoothing,
+            )(logits, targets.long())
+        else:
+            ce = self.ce_loss(logits, targets.long())
+
+        tversky = self.tversky_loss(logits, targets)
+
+        return self.tversky_weight * tversky + self.ce_weight * ce
