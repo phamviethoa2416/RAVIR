@@ -7,15 +7,17 @@ class ResidualBlock(nn.Module):
     def __init__(self, in_channels: int, out_channels: int, dropout_rate: float = 0.0):
         super().__init__()
 
+        groups = 8 if out_channels % 8 == 0 else 4 if out_channels % 4 == 0 else 1
+
         self.conv1 = nn.Conv2d(in_channels, out_channels, kernel_size=3, padding=1, bias=False)
-        self.bn1 = nn.BatchNorm2d(out_channels)
+        self.bn1 = nn.GroupNorm(groups, out_channels)
         self.conv2 = nn.Conv2d(out_channels, out_channels, kernel_size=3, padding=1, bias=False)
-        self.bn2 = nn.BatchNorm2d(out_channels)
+        self.bn2 = nn.GroupNorm(groups, out_channels)
         self.dropout = nn.Dropout2d(dropout_rate) if dropout_rate > 0.0 else nn.Identity()
 
         if in_channels != out_channels:
             self.identity_conv = nn.Conv2d(in_channels, out_channels, kernel_size=1, bias=False)
-            self.identity_bn = nn.BatchNorm2d(out_channels)
+            self.identity_bn = nn.GroupNorm(groups, out_channels)
         else:
             self.identity_conv = None
             self.identity_bn = None
