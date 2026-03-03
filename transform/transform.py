@@ -25,8 +25,8 @@ def get_train_transform() -> alb.Compose:
             p=0.3,
         ),
         alb.ElasticTransform(
-            alpha=34,
-            sigma=4,
+            alpha=15,
+            sigma=6,
             border_mode=cv2.BORDER_CONSTANT,
             p=0.3,
         ),
@@ -40,7 +40,7 @@ def get_train_transform() -> alb.Compose:
             p=0.4,
         ),
         alb.GaussianBlur(blur_limit=(3, 3), sigma_limit=(0.1, 1.0), p=0.25),
-        alb.GaussNoise(p=0.2),
+        alb.GaussNoise(std_range=(0.02, 0.08), p=0.2),
 
         # Normalize
         alb.Normalize(mean=(0.5,), std=(0.5,), max_pixel_value=255.0),

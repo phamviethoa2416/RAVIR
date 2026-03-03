@@ -14,7 +14,7 @@ class ConvBlock(nn.Module):
             nn.Conv2d(out_channels, out_channels, kernel_size=3, padding=1, bias=False),
             nn.BatchNorm2d(out_channels),
             nn.ReLU(inplace=True),
-            nn.Dropout(dropout_rate) if dropout_rate > 0.0 else nn.Identity(),
+            nn.Dropout2d(dropout_rate) if dropout_rate > 0.0 else nn.Identity(),
         )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:

@@ -23,8 +23,8 @@ def mask_to_class(mask_np: np.ndarray) -> np.ndarray:
 def compute_class_weights(
         mask_dir: str,
         file_list: list,
-        min_weight: float = 1.0,
-        max_weight: float = 10.0,
+        min_weight: float = 0.5,
+        max_weight: float = 5.0,
 ) -> torch.Tensor:
     class_counts = np.zeros(Config.NUM_CLASSES, dtype=np.float64)
 
@@ -38,7 +38,7 @@ def compute_class_weights(
 
     freq = class_counts / (class_counts.sum() + 1e-6)
     median_freq = np.median(freq)
-    weights = median_freq / (freq + 1e-6)
+    weights = np.sqrt(median_freq / (freq + 1e-6))
     weights = np.clip(weights, a_min=min_weight, a_max=max_weight)
 
     return torch.tensor(weights, dtype=torch.float32)

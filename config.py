@@ -14,7 +14,7 @@ class Config:
     # ── Dataset ────────────────────────────────────────────────────────────────
     NUM_CLASSES = 3  # background, artery, vein
     CLASS_NAMES = ["background", "artery", "vein"]
-    IMG_SIZE = 256  # sliding window patch size (px)
+    IMG_SIZE = 512  # sliding window patch size (px)
     IN_CHANNELS = 1  # grayscale input
 
     MASK_PIXEL_VALUES = {
@@ -28,15 +28,15 @@ class Config:
     DROPOUT_RATE = 0.1  # dropout probability
 
     # ── Training ───────────────────────────────────────────────────────────────
-    BATCH_SIZE = 8  # mini batch size
-    GRAD_ACCUMULATION_STEPS = 1  # effective batch
+    BATCH_SIZE = 4  # mini batch size
+    GRAD_ACCUMULATION_STEPS = 4  # effective batch
     EPOCHS = 600  # total training epochs
     NUM_FOLDS = 5 # number of folds for k-fold cross-validation
     VAL_FOLD = 0
 
     # ── Optimizer (Adam) ───────────────────────────────────────────────────────
     LEARNING_RATE = 3e-4  # initial LR
-    WEIGHT_DECAY = 1e-3  # L2 regularization for Adam
+    WEIGHT_DECAY = 1e-4  # L2 regularization for Adam
 
     # ── LR Scheduler (Cosine Annealing with Warm Restarts) ──────────────────────────────────────────────
     LR_SCHEDULER = "cosine_warm_restarts"  # reduce LR by factor every N epochs
@@ -49,6 +49,11 @@ class Config:
     # ── Loss Function Weights  ────────────────────────────────────────
     DICE_WEIGHT = 1.0  # weight for Dice loss term
     CE_WEIGHT = 1.0  # weight for Cross-Entropy loss term
+    TVERSKY_WEIGHT = 0.7
+    TVERSKY_CE_WEIGHT = 0.3
+    TVERSKY_ALPHA = 0.3
+    TVERSKY_BETA = 0.7
+    LABEL_SMOOTHING = 0.1
 
     # ── Class Imbalance Handling ───────────────────────────────────────────────
     USE_DYNAMIC_WEIGHTS = True  # recompute class weights per batch

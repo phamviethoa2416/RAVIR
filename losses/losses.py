@@ -21,6 +21,7 @@ class DiceLoss(nn.Module):
         intersection = (probs * one_hot).sum(dim=(2, 3))
         cardinality = probs.sum(dim=(2, 3)) + one_hot.sum(dim=(2, 3))
         dice = (2 * intersection + self.smooth) / (cardinality + self.smooth)
+        dice = dice[: , 1:]
         dice_loss = (1.0 - dice).mean()
 
         return dice_loss
@@ -90,6 +91,7 @@ class TverskyLoss(nn.Module):
         fn = ((1 - probs) * one_hot).sum(dim=(2, 3))
 
         tversky = (tp + self.smooth) / (tp + self.alpha * fp + self.beta * fn + self.smooth)
+        tversky = tversky[:, 1:]
         tversky_loss = 1 - tversky.mean()
 
         return tversky_loss
