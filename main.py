@@ -1,9 +1,8 @@
+import argparse
 import os
 import time
-import argparse
 from datetime import datetime
 
-import numpy as np
 import torch
 import torch.optim as optim
 from sklearn.model_selection import KFold
@@ -11,9 +10,9 @@ from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
 
 from config import Config
-from losses import CombinedLoss
+from losses.losses import TverskyCELoss
 from metrics import SegmentationMetrics
-from models import UNet
+from models import ResUNet
 from training import train_one_epoch, validate
 from transform import get_val_transform, get_train_transform
 from transform.ravir import RAVIRDataset
@@ -38,7 +37,7 @@ def parse_args():
 
 
 def summary():
-    model = UNet(
+    model = ResUNet(
         in_channels=Config.IN_CHANNELS,
         num_classes=Config.NUM_CLASSES,
         channels=Config.CHANNELS,
@@ -133,7 +132,7 @@ def train(args):
         pin_memory=True,
     )
 
-    model = UNet(
+    model = ResUNet(
         in_channels=Config.IN_CHANNELS,
         num_classes=Config.NUM_CLASSES,
         channels=Config.CHANNELS,
@@ -149,23 +148,24 @@ def train(args):
     if not Config.USE_DYNAMIC_WEIGHTS:
         static_weights = torch.tensor(Config.CE_CLASS_WEIGHTS, dtype=torch.float32)
 
-    criterion = CombinedLoss(
+    criterion = TverskyCELoss(
         num_classes=Config.NUM_CLASSES,
-        dice_weight=Config.DICE_WEIGHT,
+        tversky_weight=Config.TVERSKY_WEIGHT,
+        tversky_alpha=Config.TVERSKY_ALPHA,
+        tversky_beta=Config.TVERSKY_BETA,
         ce_weight=Config.CE_WEIGHT,
-        label_smoothing=0.1,
+        label_smoothing=Config.LABEL_SMOOTHING,
     )
 
-    optimizer = optim.Adam(
+    optimizer = torch.optim.AdamW(
         model.parameters(),
         lr=Config.LEARNING_RATE,
         weight_decay=Config.WEIGHT_DECAY,
     )
 
-    scheduler = optim.lr_scheduler.CosineAnnealingWarmRestarts(
+    scheduler = optim.lr_scheduler.CosineAnnealingLR(
         optimizer,
-        T_0=Config.COSINE_T0,
-        T_mult=Config.COSINE_T_MULT,
+        T_max=Config.EPOCHS,
         eta_min=1e-6,
     )
 
