@@ -1,4 +1,3 @@
-from .unet import UNet
-from .resunet import ResUNet
+from .model import RAVIRNet
 
-__all__ = ["UNet", "ResUNet"]
+__all__ = ["RAVIRNet"]
