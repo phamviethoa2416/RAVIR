@@ -38,25 +38,6 @@ class RAVIRNet(nn.Module):
         # Head 2: binary vessel probability
         self.vessel_prob_head = nn.Conv2d(c1, 1, kernel_size=1)
 
-        # Head 3: orientation field (cos θ, sin θ)
-        self.orientation_head = nn.Sequential(
-            nn.Conv2d(c1, c1 // 2, kernel_size=3, padding=1, bias=False),
-            nn.BatchNorm2d(c1 // 2),
-            nn.ReLU(inplace=True),
-            nn.Conv2d(c1 // 2, 2, kernel_size=1),
-        )
-
-        # Head 4: vessel width per type (artery, vein)
-        self.width_head = nn.Sequential(
-            nn.Conv2d(c1, c1 // 2, kernel_size=3, padding=1, bias=False),
-            nn.BatchNorm2d(c1 // 2),
-            nn.ReLU(inplace=True),
-            nn.Conv2d(c1 // 2, 2, kernel_size=1),
-        )
-
-        # Head 5: endpoint probability
-        self.endpoint_head = nn.Conv2d(c1, 1, kernel_size=1)
-
         self._init_weights()
 
     def _init_weights(self):
@@ -65,9 +46,11 @@ class RAVIRNet(nn.Module):
                 nn.init.kaiming_normal_(m.weight, mode="fan_out", nonlinearity="relu")
                 if m.bias is not None:
                     nn.init.constant_(m.bias, 0)
-            elif isinstance(m, nn.BatchNorm2d):
+            elif isinstance(m, (nn.BatchNorm2d, nn.GroupNorm)):
                 nn.init.constant_(m.weight, 1)
                 nn.init.constant_(m.bias, 0)
+            elif isinstance(m, nn.ConvTranspose2d):
+                nn.init.kaiming_normal_(m.weight, mode="fan_out", nonlinearity="relu")
 
     def forward(self, x: torch.Tensor) -> dict[str, torch.Tensor]:
         skips, bottleneck = self.encoder(x)
@@ -76,7 +59,4 @@ class RAVIRNet(nn.Module):
         return {
             "segmentation": self.seg_head(features),
             "vessel_prob": self.vessel_prob_head(features),
-            "orientation": self.orientation_head(features),
-            "width": self.width_head(features),
-            "endpoint": self.endpoint_head(features),
         }

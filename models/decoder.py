@@ -15,15 +15,24 @@ class DecoderStage(nn.Module):
             use_attention: bool = True,
     ):
         super().__init__()
-        self.up_conv = nn.Conv2d(in_channels, in_channels // 2, kernel_size=1)
+        self.up = nn.ConvTranspose2d(
+            in_channels, in_channels // 2,
+            kernel_size=2, stride=2, bias=False,
+        )
+        self.bn_up = nn.BatchNorm2d(in_channels // 2)
+        self.relu = nn.ReLU(inplace=True)
+
         self.residual = ResidualBlock(
             in_channels // 2 + skip_channels, out_channels, dropout_rate,
         )
         self.attention = CBAMBlock(out_channels) if use_attention else nn.Identity()
 
     def forward(self, x: torch.Tensor, skip: torch.Tensor) -> torch.Tensor:
-        x = F.interpolate(x, size=skip.shape[2:], mode="bilinear", align_corners=False)
-        x = self.up_conv(x)
+        x = self.relu(self.bn_up(self.up(x)))
+
+        if x.shape[2:] != skip.shape[2:]:
+            x = F.interpolate(x, size=skip.shape[2:], mode="bilinear", align_corners=False)
+
         x = torch.cat([skip, x], dim=1)
         x = self.residual(x)
         x = self.attention(x)

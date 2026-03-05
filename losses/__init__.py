@@ -4,9 +4,6 @@ from .losses import (
     TverskyLoss,
     TverskyCELoss,
     VesselProbLoss,
-    OrientationLoss,
-    WidthMapLoss,
-    EndpointLoss,
     MultiHeadLoss,
 )
 
@@ -16,8 +13,5 @@ __all__ = [
     "TverskyLoss",
     "TverskyCELoss",
     "VesselProbLoss",
-    "OrientationLoss",
-    "WidthMapLoss",
-    "EndpointLoss",
     "MultiHeadLoss",
 ]
