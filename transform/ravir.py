@@ -3,8 +3,6 @@ import os
 import numpy as np
 import torch
 from PIL import Image
-from scipy.ndimage import distance_transform_edt, gaussian_filter, sobel, convolve
-from skimage.morphology import skeletonize
 from torch.utils.data import Dataset
 
 from config import Config
@@ -12,55 +10,9 @@ from config import Config
 
 def mask_to_class(mask_np: np.ndarray) -> np.ndarray:
     class_mask = np.zeros_like(mask_np, dtype=np.int32)
-    valid_pixels = np.zeros_like(mask_np, dtype=bool)
     for pixel_value, class_idx in Config.MASK_PIXEL_VALUES.items():
-        region = (mask_np == pixel_value)
-        class_mask[region] = class_idx
-        valid_pixels |= region
+        class_mask[mask_np == pixel_value] = class_idx
     return class_mask
-
-
-def _generate_aux_labels(mask_np: np.ndarray) -> dict[str, np.ndarray]:
-    """Generate all auxiliary ground-truth maps from a class-index mask.
-
-    Returns dict with keys: vessel_prob, orientation, width_artery,
-    width_vein, endpoint.
-    """
-    artery = (mask_np == 1).astype(np.uint8)
-    vein = (mask_np == 2).astype(np.uint8)
-    vessel = ((mask_np > 0)).astype(np.uint8)
-
-    # ── vessel probability (binary) ───────────────────────────────────
-    vessel_prob = vessel.astype(np.float32)
-
-    # ── orientation field (cos θ, sin θ along vessel) ─────────────────
-    smoothed = gaussian_filter(vessel.astype(np.float32), sigma=2.0)
-    dy = sobel(smoothed, axis=0)
-    dx = sobel(smoothed, axis=1)
-    along_x = -dy
-    along_y = dx
-    mag = np.sqrt(along_x ** 2 + along_y ** 2) + 1e-7
-    cos_theta = (along_x / mag * vessel).astype(np.float32)
-    sin_theta = (along_y / mag * vessel).astype(np.float32)
-
-    # ── width maps per vessel type ────────────────────────────────────
-    width_artery = distance_transform_edt(artery).astype(np.float32)
-    width_vein = distance_transform_edt(vein).astype(np.float32)
-
-    # ── endpoint probability ──────────────────────────────────────────
-    skeleton = skeletonize(vessel).astype(np.int32)
-    kernel = np.array([[1, 1, 1], [1, 0, 1], [1, 1, 1]])
-    neighbors = convolve(skeleton, kernel, mode="constant", cval=0)
-    endpoint = ((skeleton > 0) & (neighbors == 1)).astype(np.float32)
-
-    return {
-        "vessel_prob": vessel_prob,
-        "cos_theta": cos_theta,
-        "sin_theta": sin_theta,
-        "width_artery": width_artery,
-        "width_vein": width_vein,
-        "endpoint": endpoint,
-    }
 
 
 def compute_class_weights(
@@ -72,7 +24,7 @@ def compute_class_weights(
     class_counts = np.zeros(Config.NUM_CLASSES, dtype=np.float64)
     for filename in file_list:
         mask = np.array(
-            Image.open(os.path.join(mask_dir, filename)).convert("L")
+            Image.open(os.path.join(mask_dir, filename)).convert("L"),
         )
         class_mask = mask_to_class(mask)
         for c in range(Config.NUM_CLASSES):
@@ -110,11 +62,13 @@ class RAVIRDataset(Dataset):
     def __getitem__(self, idx: int) -> dict:
         filename = self.file_list[idx]
 
+        # ── Load grayscale image ──────────────────────────────────────
         image = np.array(
             Image.open(os.path.join(self.img_dir, filename)).convert("L"),
             dtype=np.uint8,
         )
 
+        # ── Load or create mask ───────────────────────────────────────
         if not self.is_test and self.mask_dir is not None:
             raw_mask = np.array(
                 Image.open(os.path.join(self.mask_dir, filename)).convert("L"),
@@ -124,32 +78,23 @@ class RAVIRDataset(Dataset):
         else:
             mask = np.zeros(image.shape[:2], dtype=np.int32)
 
+        # ── Apply transforms ──────────────────────────────────────────
         if self.transform:
             augmented = self.transform(image=image, mask=mask)
-            image = augmented["image"]
-            mask = augmented["mask"].long()
+            image = augmented["image"]          # (1, H, W) float tensor
+            mask = augmented["mask"].long()      # (H, W) long tensor
         else:
             image = torch.from_numpy(
                 ((image.astype(np.float32) / 255.0) - 0.5) / 0.5
             ).unsqueeze(0)
             mask = torch.from_numpy(mask).long()
 
-        # ── auxiliary labels (on-the-fly) ─────────────────────────────
-        mask_np = mask.numpy()
-        aux = _generate_aux_labels(mask_np)
+        # ── Vessel probability: derived directly from mask tensor ─────
+        vessel_prob = (mask > 0).float().unsqueeze(0)   # (1, H, W)
 
         return {
             "image": image,
             "mask": mask,
-            "vessel_prob": torch.from_numpy(aux["vessel_prob"]).unsqueeze(0),           # (1, H, W)
-            "orientation": torch.stack([                                                  # (2, H, W)
-                torch.from_numpy(aux["cos_theta"]),
-                torch.from_numpy(aux["sin_theta"]),
-            ], dim=0),
-            "width": torch.stack([                                                        # (2, H, W)
-                torch.from_numpy(aux["width_artery"]),
-                torch.from_numpy(aux["width_vein"]),
-            ], dim=0),
-            "endpoint": torch.from_numpy(aux["endpoint"]).unsqueeze(0),                  # (1, H, W)
+            "vessel_prob": vessel_prob,
             "filename": filename,
         }

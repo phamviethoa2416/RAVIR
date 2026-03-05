@@ -9,35 +9,31 @@ class SegmentationMetrics:
         self.confusion_matrix = np.zeros((num_classes, num_classes), dtype=np.int64)
 
     def reset(self):
-        self.confusion_matrix = np.zeros(
-            (self.num_classes, self.num_classes), dtype=np.int64
-        )
+        self.confusion_matrix.fill(0)
 
     def update(self, predictions: torch.Tensor, targets: torch.Tensor):
         preds_np = predictions.cpu().numpy().flatten().astype(int)
         targets_np = targets.cpu().numpy().flatten().astype(int)
 
-        mask = (targets_np >= 0) & (targets_np < self.num_classes) & \
-               (preds_np >= 0) & (preds_np < self.num_classes)
+        valid = (
+            (targets_np >= 0) & (targets_np < self.num_classes)
+            & (preds_np >= 0) & (preds_np < self.num_classes)
+        )
 
         np.add.at(
             self.confusion_matrix,
-            (targets_np[mask], preds_np[mask]),
-            1
+            (targets_np[valid], preds_np[valid]),
+            1,
         )
 
     def compute(self) -> dict:
         eps = 1e-7
         cm = self.confusion_matrix
+        total = cm.sum()
         metrics = {}
 
-        dice_list = []
-        iou_list = []
-        sensitivity_list = []
-        specificity_list = []
-        precision_list = []
-
-        total = cm.sum()
+        dice_list, iou_list = [], []
+        sensitivity_list, specificity_list, precision_list = [], [], []
 
         for c in range(self.num_classes):
             tp = cm[c, c]
@@ -45,9 +41,9 @@ class SegmentationMetrics:
             fn = cm[c, :].sum() - tp
             tn = total - tp - fp - fn
 
-            dice = (2 * tp + eps) / (2 * tp + fp + fn + eps)  # F1
+            dice = (2 * tp + eps) / (2 * tp + fp + fn + eps)
             iou = (tp + eps) / (tp + fp + fn + eps)
-            sensitivity = (tp + eps) / (tp + fn + eps)  # Recall
+            sensitivity = (tp + eps) / (tp + fn + eps)
             specificity = (tn + eps) / (tn + fp + eps)
             precision = (tp + eps) / (tp + fp + eps)
 
@@ -57,7 +53,7 @@ class SegmentationMetrics:
             specificity_list.append(specificity)
             precision_list.append(precision)
 
-            name = self.class_names[c] if c < len(self.class_names) else f"class_{c}"
+            name = self.class_names[c]
             metrics[f"{name}_Dice"] = float(dice)
             metrics[f"{name}_IoU"] = float(iou)
             metrics[f"{name}_Sensitivity"] = float(sensitivity)

@@ -6,10 +6,12 @@ from config import Config
 
 
 def get_train_transform() -> alb.Compose:
-    return alb.Compose([
-        # Patch extraction
-        alb.RandomCrop(Config.IMG_SIZE, Config.IMG_SIZE),
+    transforms = []
 
+    if Config.IMG_SIZE < Config.ORIGINAL_SIZE:
+        transforms.append(alb.RandomCrop(Config.IMG_SIZE, Config.IMG_SIZE))
+
+    transforms.extend([
         # Geometric
         alb.HorizontalFlip(p=0.5),
         alb.VerticalFlip(p=0.5),
@@ -47,15 +49,26 @@ def get_train_transform() -> alb.Compose:
         ToTensorV2(),
     ])
 
+    return alb.Compose(transforms)
 
 def get_val_transform() -> alb.Compose:
+    transforms = []
+
+    if Config.IMG_SIZE < Config.ORIGINAL_SIZE:
+        transforms.append(
+            alb.Resize(Config.IMG_SIZE, Config.IMG_SIZE, interpolation=cv2.INTER_LINEAR),
+        )
+
+    transforms.extend([
+        alb.Normalize(mean=(0.5,), std=(0.5,), max_pixel_value=255.0),
+        ToTensorV2(),
+    ])
+
+    return alb.Compose(transforms)
+
+
+def get_test_transform() -> alb.Compose:
     return alb.Compose([
-        alb.PadIfNeeded(
-            min_height=Config.IMG_SIZE,
-            min_width=Config.IMG_SIZE,
-            border_mode=cv2.BORDER_CONSTANT,
-            p=1.0,
-        ),
         alb.Normalize(mean=(0.5,), std=(0.5,), max_pixel_value=255.0),
         ToTensorV2(),
     ])
