@@ -131,9 +131,10 @@ class Config:
     CLASS_TO_PIXEL = {0: 0, 1: 128, 2: 256}
 
     # ── Model Architecture ─────────────────────────────────────────────────────
-    CHANNELS = [64, 128, 256, 512, 1024]    # encoder feature map sizes
+    ENCODER_NAME = "resnet34"               # SMP encoder backbone
+    ENCODER_WEIGHTS = "imagenet"            # pretrained weights (None to train from scratch)
     DROPOUT_RATE = 0.1                      # dropout probability
-    USE_ATTENTION = True                    # enable CBAM attention in encoder/decoder
+    USE_ATTENTION = True                    # enable CBAM attention in decoder
 
     # ── Training (auto-scaled) ─────────────────────────────────────────────────
     BATCH_SIZE = _GPU["batch_size"]
