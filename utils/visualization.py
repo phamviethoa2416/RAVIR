@@ -7,10 +7,12 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
+from config import Config
+
 COLOR_MAP = {
-    0: [0, 0, 0],
-    1: [255, 0, 0],
-    2: [0, 0, 255],
+    0: [0, 0, 0],       # background
+    1: [255, 0, 0],      # artery
+    2: [0, 0, 255],      # vein
 }
 
 
@@ -21,60 +23,72 @@ def _class_mask_to_rgb(mask: np.ndarray) -> np.ndarray:
     return rgb
 
 
+def _denormalize(img_tensor: torch.Tensor) -> np.ndarray:
+    return img_tensor.cpu().numpy() * 0.5 + 0.5
+
+
+@torch.no_grad()
 def visualize_predictions(
         model,
         loader,
-        device,
+        device: str,
         output_dir: str,
         epoch: int,
         num_samples: int = 3,
 ):
+    from training import get_amp_dtype
+    from torch.amp import autocast
+
     model.eval()
     os.makedirs(output_dir, exist_ok=True)
 
+    amp_dtype = get_amp_dtype()
+    use_amp = Config.USE_AMP and device == "cuda"
+
     saved = 0
-    with torch.no_grad():
-        for batch in loader:
+    for batch in loader:
+        if saved >= num_samples:
+            break
+
+        images = batch["image"].to(device, non_blocking=True)
+        masks = batch["mask"]
+        filenames = batch["filename"]
+
+        with autocast(device_type="cuda", dtype=amp_dtype, enabled=use_amp):
+            outputs = model(images)
+        preds = torch.argmax(outputs["segmentation"], dim=1).cpu()
+
+        for i in range(images.size(0)):
             if saved >= num_samples:
                 break
 
-            images = batch["image"].to(device)
-            masks = batch["mask"]
-            filenames = batch["filename"]
-            outputs = model(images)
-            preds = torch.argmax(outputs["segmentation"], dim=1)
+            img_np = _denormalize(images[i, 0])
+            gt_np = masks[i].numpy()
+            pred_np = preds[i].numpy()
 
-            for i in range(images.size(0)):
-                if saved >= num_samples:
-                    break
+            fig, axes = plt.subplots(1, 3, figsize=(15, 5))
 
-                img = images[i, 0].cpu().numpy()
-                gt = masks[i].cpu().numpy()
-                pred = preds[i].cpu().numpy()
+            axes[0].imshow(img_np, cmap="gray")
+            axes[0].set_title("Input Image")
 
-                fig, axes = plt.subplots(1, 3, figsize=(15, 5))
-                axes[0].imshow(img, cmap="gray")
-                axes[0].set_title("Input Image")
-                axes[1].imshow(_class_mask_to_rgb(gt))
-                axes[1].set_title("Ground Truth")
-                axes[2].imshow(_class_mask_to_rgb(pred))
-                axes[2].set_title("Prediction")
+            axes[1].imshow(_class_mask_to_rgb(gt_np))
+            axes[1].set_title("Ground Truth")
 
-                for ax in axes:
-                    ax.axis("off")
+            axes[2].imshow(_class_mask_to_rgb(pred_np))
+            axes[2].set_title("Prediction")
 
-                plt.suptitle(f"Epoch {epoch} | {filenames[i]}", fontsize=14)
-                plt.tight_layout()
-                plt.savefig(
-                    os.path.join(
-                        output_dir,
-                        f"epoch{epoch:03d}_{saved:02d}_{filenames[i]}"
-                    ),
-                    dpi=100,
-                    bbox_inches="tight",
-                )
-                plt.close(fig)
-                saved += 1
+            for ax in axes:
+                ax.axis("off")
+
+            plt.suptitle(f"Epoch {epoch} | {filenames[i]}", fontsize=14)
+            plt.tight_layout()
+            plt.savefig(
+                os.path.join(output_dir, f"epoch{epoch:03d}_{saved:02d}_{filenames[i]}"),
+                dpi=100,
+                bbox_inches="tight",
+            )
+            plt.close(fig)
+            saved += 1
 
 
 def plot_training_curves(
@@ -82,8 +96,8 @@ def plot_training_curves(
         val_losses: list,
         val_dices: list,
         output_dir: str,
-        val_f1_artery: list = None,
-        val_f1_vein: list = None,
+        val_f1_artery: list | None = None,
+        val_f1_vein: list | None = None,
 ):
     epochs = range(1, len(train_losses) + 1)
     has_perclass = val_f1_artery is not None and val_f1_vein is not None

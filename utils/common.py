@@ -6,7 +6,7 @@ import numpy as np
 import torch
 
 
-def set_seed(seed: int, deterministic: bool = True):
+def seed_everything(seed: int = 42, deterministic: bool = True):
     random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)
@@ -15,7 +15,7 @@ def set_seed(seed: int, deterministic: bool = True):
     torch.backends.cudnn.benchmark = not deterministic
 
 
-def set_logging(output_dir: str, name: str = "Training model") -> logging.Logger:
+def setup_logging(output_dir: str, name: str = "Training model") -> logging.Logger:
     os.makedirs(output_dir, exist_ok=True)
 
     logger = logging.getLogger(name)
