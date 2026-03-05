@@ -26,6 +26,7 @@ class Config:
     # ── Model Architecture ─────────────────────────────────────────────────────
     CHANNELS = [64, 128, 256, 512, 1024]  # encoder feature map sizes
     DROPOUT_RATE = 0.1  # dropout probability
+    USE_ATTENTION = True  # enable CBAM attention in encoder/decoder
 
     # ── Training ───────────────────────────────────────────────────────────────
     BATCH_SIZE = 4  # mini batch size
@@ -54,6 +55,14 @@ class Config:
     TVERSKY_ALPHA = 0.3
     TVERSKY_BETA = 0.7
     LABEL_SMOOTHING = 0.1
+
+    # ── Auxiliary Head Loss Weights ────────────────────────────────────────────
+    VESSEL_PROB_LOSS_WEIGHT = 0.5
+    ORIENTATION_LOSS_WEIGHT = 0.3
+    WIDTH_LOSS_WEIGHT = 0.3
+    ENDPOINT_LOSS_WEIGHT = 0.2
+    VESSEL_PROB_POS_WEIGHT = 3.0   # BCE pos_weight for vessel probability
+    ENDPOINT_POS_WEIGHT = 50.0     # BCE pos_weight (endpoints are extremely sparse)
 
     # ── Class Imbalance Handling ───────────────────────────────────────────────
     USE_DYNAMIC_WEIGHTS = True  # recompute class weights per batch

@@ -10,9 +10,9 @@ from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
 
 from config import Config
-from losses.losses import TverskyCELoss
+from losses import TverskyCELoss, MultiHeadLoss
 from metrics import SegmentationMetrics
-from models import ResUNet
+from models import RAVIRNet
 from training import train_one_epoch, validate
 from transform import get_val_transform, get_train_transform
 from transform.ravir import RAVIRDataset
@@ -20,7 +20,7 @@ from utils import set_seed, set_logging, visualize_predictions, plot_training_cu
 
 
 def parse_args():
-    parser = argparse.ArgumentParser(description="Enhanced ResUNet (CE+Dice) - RAVIR Vessel Segmentation")
+    parser = argparse.ArgumentParser(description="RAVIRNet — Multi-Head Vessel Segmentation")
     parser.add_argument("--epochs", type=int, default=Config.EPOCHS)
     parser.add_argument("--batch-size", type=int, default=Config.BATCH_SIZE)
     parser.add_argument("--lr", type=float, default=Config.LEARNING_RATE)
@@ -32,23 +32,22 @@ def parse_args():
                         help="Path to checkpoint to resume from")
     parser.add_argument("--summary", action="store_true",
                         help="Print model summary and exit")
-
     return parser.parse_args()
 
 
 def summary():
-    model = ResUNet(
+    model = RAVIRNet(
         in_channels=Config.IN_CHANNELS,
         num_classes=Config.NUM_CLASSES,
         channels=Config.CHANNELS,
         dropout_rate=Config.DROPOUT_RATE,
+        use_attention=Config.USE_ATTENTION,
     ).to(Config.DEVICE)
 
     total = sum(p.numel() for p in model.parameters())
     trainable = sum(p.numel() for p in model.parameters() if p.requires_grad)
 
     print(f"  Input      : {Config.IN_CHANNELS}ch  {Config.IMG_SIZE}×{Config.IMG_SIZE}")
-    print(f"  Output     : {Config.NUM_CLASSES} classes")
     print(f"  Channels   : {Config.CHANNELS}")
     print(f"  Dropout    : {Config.DROPOUT_RATE}")
     print(f"  Params     : {total:,} total  /  {trainable:,} trainable")
@@ -56,8 +55,9 @@ def summary():
 
     dummy = torch.randn(1, Config.IN_CHANNELS, Config.IMG_SIZE, Config.IMG_SIZE).to(Config.DEVICE)
     output = model(dummy)
-    print(f"  Input  shape : {tuple(dummy.shape)}")
-    print(f"  Output shape : {tuple(output.shape)}")
+    print(f"  Input shape          : {tuple(dummy.shape)}")
+    for k, v in output.items():
+        print(f"  {k:22s}: {tuple(v.shape)}")
     print("=" * 60)
 
 
@@ -117,44 +117,46 @@ def train(args):
     )
 
     train_loader = DataLoader(
-        train_dataset,
-        batch_size=Config.BATCH_SIZE,
-        shuffle=True,
-        num_workers=Config.NUM_WORKERS,
-        pin_memory=True,
-        drop_last=True,
+        train_dataset, batch_size=Config.BATCH_SIZE, shuffle=True,
+        num_workers=Config.NUM_WORKERS, pin_memory=True, drop_last=True,
     )
     val_loader = DataLoader(
-        val_dataset,
-        batch_size=1,
-        shuffle=False,
-        num_workers=Config.NUM_WORKERS,
-        pin_memory=True,
+        val_dataset, batch_size=1, shuffle=False,
+        num_workers=Config.NUM_WORKERS, pin_memory=True,
     )
 
-    model = ResUNet(
+    model = RAVIRNet(
         in_channels=Config.IN_CHANNELS,
         num_classes=Config.NUM_CLASSES,
         channels=Config.CHANNELS,
         dropout_rate=Config.DROPOUT_RATE,
+        use_attention=Config.USE_ATTENTION,
     ).to(Config.DEVICE)
 
     total_params = sum(p.numel() for p in model.parameters())
     trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
     logger.info(f"Model parameters: {total_params:,} total, {trainable_params:,} trainable")
 
-    # Determine static weights if dynamic is False
     static_weights = None
     if not Config.USE_DYNAMIC_WEIGHTS:
         static_weights = torch.tensor(Config.CE_CLASS_WEIGHTS, dtype=torch.float32)
 
-    criterion = TverskyCELoss(
+    seg_criterion = TverskyCELoss(
         num_classes=Config.NUM_CLASSES,
         tversky_weight=Config.TVERSKY_WEIGHT,
         tversky_alpha=Config.TVERSKY_ALPHA,
         tversky_beta=Config.TVERSKY_BETA,
         ce_weight=Config.CE_WEIGHT,
         label_smoothing=Config.LABEL_SMOOTHING,
+    )
+    criterion = MultiHeadLoss(
+        seg_criterion=seg_criterion,
+        vessel_prob_weight=Config.VESSEL_PROB_LOSS_WEIGHT,
+        orientation_weight=Config.ORIENTATION_LOSS_WEIGHT,
+        width_weight=Config.WIDTH_LOSS_WEIGHT,
+        endpoint_weight=Config.ENDPOINT_LOSS_WEIGHT,
+        vessel_prob_pos_weight=Config.VESSEL_PROB_POS_WEIGHT,
+        endpoint_pos_weight=Config.ENDPOINT_POS_WEIGHT,
     )
 
     optimizer = torch.optim.AdamW(
@@ -164,9 +166,7 @@ def train(args):
     )
 
     scheduler = optim.lr_scheduler.CosineAnnealingLR(
-        optimizer,
-        T_max=Config.EPOCHS,
-        eta_min=1e-6,
+        optimizer, T_max=Config.EPOCHS, eta_min=1e-6,
     )
 
     metrics_calc = SegmentationMetrics(Config.NUM_CLASSES)
@@ -196,21 +196,20 @@ def train(args):
     logger.info("  Starting Training")
     logger.info("=" * 60)
 
-    max_epochs = Config.EPOCHS
-    for epoch in range(start_epoch, max_epochs):
+    for epoch in range(start_epoch, Config.EPOCHS):
         epoch_start = time.time()
         current_lr = optimizer.param_groups[0]["lr"]
         logger.info(f"\nEpoch {epoch + 1}/{Config.EPOCHS} (lr={current_lr:.2e})")
 
-        train_loss = train_one_epoch(
+        train_loss, train_details = train_one_epoch(
             model, train_loader, criterion, optimizer,
             Config.DEVICE, grad_accum_steps=Config.GRAD_ACCUMULATION_STEPS,
-            class_weights=static_weights
+            class_weights=static_weights,
         )
 
         val_loss, metrics = validate(
             model, val_loader, criterion, Config.DEVICE, metrics_calc,
-            class_weights=static_weights
+            class_weights=static_weights,
         )
         scheduler.step()
 
@@ -220,7 +219,12 @@ def train(args):
         val_dices.append(current_dice)
 
         epoch_time = time.time() - epoch_start
-        logger.info(f"  Train Loss:  {train_loss:.4f}")
+        logger.info(f"  Train Loss:  {train_loss:.4f}  "
+                     f"(seg={train_details.get('seg_loss', 0):.3f} "
+                     f"vp={train_details.get('vessel_prob_loss', 0):.3f} "
+                     f"ori={train_details.get('orientation_loss', 0):.3f} "
+                     f"w={train_details.get('width_loss', 0):.3f} "
+                     f"ep={train_details.get('endpoint_loss', 0):.3f})")
         logger.info(f"  Val Loss:    {val_loss:.4f}")
         logger.info(f"  Vessel Dice: {metrics['Mean_Vessel_Dice']:.4f}")
         logger.info(f"  Vessel IoU:  {metrics['Mean_Vessel_IoU']:.4f}")
@@ -237,15 +241,14 @@ def train(args):
         # TensorBoard
         writer.add_scalar("Loss/train", train_loss, epoch + 1)
         writer.add_scalar("Loss/val", val_loss, epoch + 1)
+        for lk in ["seg_loss", "vessel_prob_loss", "orientation_loss", "width_loss", "endpoint_loss"]:
+            writer.add_scalar(f"Loss/{lk}", train_details.get(lk, 0), epoch + 1)
         writer.add_scalar("Metrics/Mean_Vessel_Dice", metrics["Mean_Vessel_Dice"], epoch + 1)
         writer.add_scalar("Metrics/Mean_Vessel_IoU", metrics["Mean_Vessel_IoU"], epoch + 1)
-        writer.add_scalar("Metrics/Mean_Vessel_Sensitivity", metrics["Mean_Vessel_Sensitivity"], epoch + 1)
         writer.add_scalar("LR", current_lr, epoch + 1)
         for cls in Config.CLASS_NAMES:
             writer.add_scalar(f"Dice/{cls}", metrics[f"{cls}_Dice"], epoch + 1)
-            writer.add_scalar(f"IoU/{cls}", metrics[f"{cls}_IoU"], epoch + 1)
 
-        # Save the best model
         if current_dice > best_dice:
             best_dice = current_dice
             patience_counter = 0
@@ -269,9 +272,7 @@ def train(args):
             patience_counter += 1
             logger.info(f"  No improvement. Patience: {patience_counter}/{Config.EARLY_STOPPING_PATIENCE}")
 
-        # Periodic checkpoint (every 10 epochs)
         if (epoch + 1) % 10 == 0:
-            ckpt_path = os.path.join(run_dir, f"checkpoint_epoch{epoch + 1:03d}.pth")
             torch.save({
                 "epoch": epoch + 1,
                 "model_state_dict": model.state_dict(),
@@ -282,17 +283,14 @@ def train(args):
                 "train_losses": train_losses,
                 "val_losses": val_losses,
                 "val_dices": val_dices,
-            }, ckpt_path)
+            }, os.path.join(run_dir, f"checkpoint_epoch{epoch + 1:03d}.pth"))
 
-        # Visualizations (epoch 0 + every 10 epochs)
         if (epoch + 1) % 10 == 0 or epoch == 0:
             visualize_predictions(model, val_loader, Config.DEVICE, vis_dir, epoch + 1)
 
-        # Training curves
         if len(train_losses) > 1:
             plot_training_curves(train_losses, val_losses, val_dices, run_dir)
 
-        # Early stopping
         if patience_counter >= Config.EARLY_STOPPING_PATIENCE:
             logger.info(f"\nEarly stopping triggered after {epoch + 1} epochs.")
             logger.info(f"Best validation Dice: {best_dice:.4f}")
@@ -303,17 +301,11 @@ def train(args):
     logger.info("  Training Complete")
     logger.info("=" * 60)
     logger.info(f"Best Validation Mean Vessel Dice: {best_dice:.4f}")
-    logger.info(f"Model saved at: {os.path.join(run_dir, 'best_model.pth')}")
-    logger.info(f"Training curves saved at: {os.path.join(run_dir, 'training_curves.png')}")
 
-    logger.info("\n--- Final Evaluation with Best Model ---")
     best_ckpt = torch.load(os.path.join(run_dir, "best_model.pth"), map_location=Config.DEVICE)
     model.load_state_dict(best_ckpt["model_state_dict"])
 
-    _, final = validate(
-        model, val_loader, criterion, Config.DEVICE, metrics_calc,
-        class_weights=static_weights
-    )
+    _, final = validate(model, val_loader, criterion, Config.DEVICE, metrics_calc, class_weights=static_weights)
 
     logger.info("Final Metrics:")
     logger.info(f"  Mean Vessel Dice:        {final['Mean_Vessel_Dice']:.4f}")
@@ -328,10 +320,7 @@ def train(args):
             f"Spec={final[f'{cls}_Specificity']:.4f}"
         )
 
-    visualize_predictions(
-        model, val_loader, Config.DEVICE, vis_dir,
-        epoch=999, num_samples=len(val_files),
-    )
+    visualize_predictions(model, val_loader, Config.DEVICE, vis_dir, epoch=999, num_samples=len(val_files))
     return best_dice, final
 
 

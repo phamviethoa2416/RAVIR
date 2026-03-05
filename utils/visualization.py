@@ -34,14 +34,15 @@ def visualize_predictions(
 
     saved = 0
     with torch.no_grad():
-        for images, masks, filenames in loader:
+        for batch in loader:
             if saved >= num_samples:
                 break
 
-            images = images.to(device)
-            output = model(images)
-            logits = output[0] if isinstance(output, (tuple, list)) else output
-            preds = torch.argmax(logits, dim=1)
+            images = batch["image"].to(device)
+            masks = batch["mask"]
+            filenames = batch["filename"]
+            outputs = model(images)
+            preds = torch.argmax(outputs["segmentation"], dim=1)
 
             for i in range(images.size(0)):
                 if saved >= num_samples:
