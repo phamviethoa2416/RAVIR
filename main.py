@@ -78,7 +78,8 @@ def summary():
     model = RAVIRNet(
         in_channels=Config.IN_CHANNELS,
         num_classes=Config.NUM_CLASSES,
-        channels=Config.CHANNELS,
+        encoder_name=Config.ENCODER_NAME,
+        encoder_weights=Config.ENCODER_WEIGHTS,
         dropout_rate=Config.DROPOUT_RATE,
         use_attention=Config.USE_ATTENTION,
     ).to(Config.DEVICE)
@@ -87,8 +88,9 @@ def summary():
     trainable = sum(p.numel() for p in model.parameters() if p.requires_grad)
 
     print(f"Model Architecture:")
+    print(f"  Encoder    : {Config.ENCODER_NAME} ({Config.ENCODER_WEIGHTS})")
     print(f"  Input      : {Config.IN_CHANNELS}ch  {Config.IMG_SIZE}×{Config.IMG_SIZE}")
-    print(f"  Channels   : {Config.CHANNELS}")
+    print(f"  Enc channels: {model.encoder.out_channels}")
     print(f"  Dropout    : {Config.DROPOUT_RATE}")
     print(f"  Params     : {total:,} total  /  {trainable:,} trainable")
     print("-" * 60)
@@ -185,7 +187,8 @@ def train(args):
     model = RAVIRNet(
         in_channels=Config.IN_CHANNELS,
         num_classes=Config.NUM_CLASSES,
-        channels=Config.CHANNELS,
+        encoder_name=Config.ENCODER_NAME,
+        encoder_weights=Config.ENCODER_WEIGHTS,
         dropout_rate=Config.DROPOUT_RATE,
         use_attention=Config.USE_ATTENTION,
     ).to(device)
@@ -331,7 +334,8 @@ def train(args):
                 "best_dice": best_dice,
                 "metrics": metrics,
                 "config": {
-                    "channels": Config.CHANNELS,
+                    "encoder_name": Config.ENCODER_NAME,
+                    "encoder_weights": Config.ENCODER_WEIGHTS,
                     "num_classes": Config.NUM_CLASSES,
                     "img_size": Config.IMG_SIZE,
                     "dropout": Config.DROPOUT_RATE,

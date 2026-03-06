@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -42,20 +44,23 @@ class DecoderStage(nn.Module):
 class FeatureDecoder(nn.Module):
     def __init__(
             self,
-            channels: list[int] | None = None,
+            skip_channels: list[int],
+            bottleneck_channels: int,
             dropout_rate: float = 0.0,
             use_attention: bool = True,
     ):
         super().__init__()
-        if channels is None:
-            channels = [64, 128, 256, 512, 1024]
-        assert len(channels) == 5, "channels list must have exactly 5 entries"
-        c1, c2, c3, c4, c5 = channels
+        assert len(skip_channels) == 4, f"Expected 4 skip channels, got {len(skip_channels)}"
 
-        self.dec4 = DecoderStage(c5, c4, c4, dropout_rate, use_attention)
-        self.dec3 = DecoderStage(c4, c3, c3, dropout_rate, use_attention)
-        self.dec2 = DecoderStage(c3, c2, c2, dropout_rate, use_attention)
-        self.dec1 = DecoderStage(c2, c1, c1, dropout_rate, use_attention)
+        s1, s2, s3, s4 = skip_channels
+
+        # Decoder stages (deepest → shallowest)
+        self.dec4 = DecoderStage(bottleneck_channels, s4, s4, dropout_rate, use_attention)
+        self.dec3 = DecoderStage(s4, s3, s3, dropout_rate, use_attention)
+        self.dec2 = DecoderStage(s3, s2, s2, dropout_rate, use_attention)
+        self.dec1 = DecoderStage(s2, s1, s1, dropout_rate, use_attention)
+
+        self.output_channels = s1
 
     def forward(
             self, skips: list[torch.Tensor], bottleneck: torch.Tensor,
