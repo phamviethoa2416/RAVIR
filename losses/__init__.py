@@ -5,6 +5,7 @@ from .losses import (
     TverskyCELoss,
     VesselProbLoss,
     MultiHeadLoss,
+    BinaryDiceBCELoss,
 )
 
 __all__ = [
@@ -14,4 +15,5 @@ __all__ = [
     "TverskyCELoss",
     "VesselProbLoss",
     "MultiHeadLoss",
+    "BinaryDiceBCELoss",
 ]

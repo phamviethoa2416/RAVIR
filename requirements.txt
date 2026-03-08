@@ -11,3 +11,4 @@ matplotlib
 segmentation-models-pytorch>=0.3.0
 scikit-image
 scipy
+monai
