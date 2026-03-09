@@ -49,6 +49,32 @@ class TverskyLoss(nn.Module):
         )
         return 1 - tversky[:, 1:].mean()
 
+class BinaryDiceBCELoss(nn.Module):
+    def __init__(
+            self,
+            dice_weight: float = 0.5,
+            bce_weight: float = 0.5,
+            smooth: float = 1e-5,
+    ):
+        super().__init__()
+        self.dice_weight = dice_weight
+        self.bce_weight = bce_weight
+        self.smooth = smooth
+
+    def forward(
+            self,
+            logits: torch.Tensor,
+            targets: torch.Tensor,
+    ) -> torch.Tensor:
+        bce = F.binary_cross_entropy_with_logits(logits, targets)
+
+        probs = torch.sigmoid(logits)
+        intersection = (probs * targets).sum(dim=(2, 3))
+        cardinality = probs.sum(dim=(2, 3)) + targets.sum(dim=(2, 3))
+        dice = (2.0 * intersection + self.smooth) / (cardinality + self.smooth)
+        dice_loss = 1.0 - dice.mean()
+
+        return self.dice_weight * dice_loss + self.bce_weight * bce
 
 class CombinedLoss(nn.Module):
     """CrossEntropy + Dice loss for semantic segmentation."""

@@ -110,7 +110,7 @@ _GPU = _detect_gpu_profile()
 
 class Config:
     # ── Paths ──────────────────────────────────────────────────────────────────
-    DATA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data")
+    DATA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "datasets")
     TRAIN_IMG_DIR = os.path.join(DATA_DIR, "train", "training_images")
     TRAIN_MASK_DIR = os.path.join(DATA_DIR, "train", "training_masks")
     TEST_IMG_DIR = os.path.join(DATA_DIR, "test")
