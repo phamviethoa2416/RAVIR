@@ -32,6 +32,8 @@ def get_train_transform() -> alb.Compose:
             border_mode=cv2.BORDER_CONSTANT,
             p=0.3,
         ),
+        alb.GridDistortion(p=0.3),
+        alb.OpticalDistortion(distort_limit=0.2, p=0.2),
 
         # Intensity
         alb.CLAHE(clip_limit=2.0, tile_grid_size=(8, 8), p=0.3),
@@ -43,6 +45,15 @@ def get_train_transform() -> alb.Compose:
         ),
         alb.GaussianBlur(blur_limit=(3, 3), sigma_limit=(0.1, 1.0), p=0.25),
         alb.GaussNoise(std_range=(0.02, 0.08), p=0.2),
+
+        # Masking
+        alb.CoarseDropout(
+            num_holes_range=(3, 6),
+            hole_height_range=(15, 40),
+            hole_width_range=(15, 40),
+            fill=0,
+            p=0.3,
+        ),
 
         # Normalize
         alb.Normalize(mean=(0.5,), std=(0.5,), max_pixel_value=255.0),
