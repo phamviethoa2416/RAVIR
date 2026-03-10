@@ -149,12 +149,10 @@ class ASPP(nn.Module):
                 ))
         self.branches = nn.ModuleList(branches)
 
-        self.gap = nn.Sequential(
-            nn.AdaptiveAvgPool2d(1),
-            nn.Conv2d(in_channels, out_channels, 1, bias=False),
-            nn.BatchNorm2d(out_channels),
-            nn.ReLU(inplace=True),
-        )
+        self.gap_pool = nn.AdaptiveAvgPool2d(1)
+        self.gap_conv = nn.Conv2d(in_channels, out_channels, 1, bias=False)
+        self.gap_bn = nn.BatchNorm2d(out_channels)
+        self.gap_relu = nn.ReLU(inplace=True)
 
         n_features = len(dilations) + 1
         self.project = nn.Sequential(
@@ -166,7 +164,8 @@ class ASPP(nn.Module):
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         features = [branch(x) for branch in self.branches]
-        gap = self.gap(x)
+        gap = self.gap_conv(self.gap_pool(x))
         gap = F.interpolate(gap, size=x.shape[2:], mode="bilinear", align_corners=False)
+        gap = self.gap_relu(self.gap_bn(gap))
         features.append(gap)
         return self.project(torch.cat(features, dim=1))
