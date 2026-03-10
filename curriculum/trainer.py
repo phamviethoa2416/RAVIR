@@ -29,7 +29,19 @@ def train_one_epoch_binary(
 
         with autocast(device_type="cuda", dtype=amp_dtype, enabled=use_amp):
             outputs = model(images)
-            loss = criterion(outputs["vessel_prob"], masks)
+            main_loss = criterion(outputs["vessel_prob"], masks)
+
+            # Deep supervision: auxiliary segmentation heads (if available)
+            if isinstance(outputs, dict) and "deep_supervision" in outputs:
+                ds_maps = outputs["deep_supervision"]
+                # Weights for deeper to shallower outputs
+                ds_weights = [0.5, 0.3, 0.2]
+                ds_loss = 0.0
+                for w, ds_logits in zip(ds_weights, ds_maps):
+                    ds_loss = ds_loss + w * criterion(ds_logits, masks)
+                loss = main_loss + ds_loss
+            else:
+                loss = main_loss
 
         scaled_loss = loss / grad_accum_steps
 
@@ -78,7 +90,17 @@ def validate_binary(
 
         with autocast(device_type="cuda", dtype=amp_dtype, enabled=use_amp):
             outputs = model(images)
-            loss = criterion(outputs["vessel_prob"], masks)
+            main_loss = criterion(outputs["vessel_prob"], masks)
+
+            if isinstance(outputs, dict) and "deep_supervision" in outputs:
+                ds_maps = outputs["deep_supervision"]
+                ds_weights = [0.5, 0.3, 0.2]
+                ds_loss = 0.0
+                for w, ds_logits in zip(ds_weights, ds_maps):
+                    ds_loss = ds_loss + w * criterion(ds_logits, masks)
+                loss = main_loss + ds_loss
+            else:
+                loss = main_loss
 
         running_loss += loss.item()
         num_batches += 1

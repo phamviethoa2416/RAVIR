@@ -76,6 +76,34 @@ class BinaryDiceBCELoss(nn.Module):
 
         return self.dice_weight * dice_loss + self.bce_weight * bce
 
+
+class BinaryTverskyLoss(nn.Module):
+    """Binary Tversky loss operating on logits (sigmoid inside)."""
+
+    def __init__(
+            self,
+            alpha: float = 0.3,
+            beta: float = 0.7,
+            smooth: float = 1e-5,
+    ):
+        super().__init__()
+        self.alpha = alpha
+        self.beta = beta
+        self.smooth = smooth
+
+    def forward(self, logits: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
+        probs = torch.sigmoid(logits)
+        targets = targets.float()
+
+        tp = (probs * targets).sum(dim=(2, 3))
+        fp = (probs * (1 - targets)).sum(dim=(2, 3))
+        fn = ((1 - probs) * targets).sum(dim=(2, 3))
+
+        tversky = (tp + self.smooth) / (
+            tp + self.alpha * fp + self.beta * fn + self.smooth
+        )
+        return 1.0 - tversky.mean()
+
 class CombinedLoss(nn.Module):
     """CrossEntropy + Dice loss for semantic segmentation."""
 

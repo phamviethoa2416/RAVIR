@@ -22,7 +22,7 @@ from curriculum import (
     get_round2_val_transform,
 )
 from curriculum.trainer import train_one_epoch_binary, validate_binary
-from losses import BinaryDiceBCELoss
+from losses import BinaryTverskyLoss
 from models import RAVIRNet
 from training import get_amp_dtype
 from transform.ravir import RAVIRDataset
@@ -168,7 +168,10 @@ def train_round1(args):
     log.info("  Params    : %s total / %s trainable", f"{total_p:,}", f"{train_p:,}")
 
     # ── Loss / Optimizer / Scheduler ──────────────────────────────────
-    criterion = BinaryDiceBCELoss(dice_weight=0.5, bce_weight=0.5).to(device)
+    criterion = BinaryTverskyLoss(
+        alpha=Config.TVERSKY_ALPHA,
+        beta=Config.TVERSKY_BETA,
+    ).to(device)
 
     optimizer = optim.AdamW(model.parameters(), lr=args.lr, weight_decay=1e-4)
     scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.epochs, eta_min=1e-6)
@@ -391,7 +394,10 @@ def train_round2(args):
     log.info("  Params     : %s", f"{total_p:,}")
 
     # ── Loss / Optimizer / Scheduler ──────────────────────────────────
-    criterion = BinaryDiceBCELoss(dice_weight=0.5, bce_weight=0.5).to(device)
+    criterion = BinaryTverskyLoss(
+        alpha=Config.TVERSKY_ALPHA,
+        beta=Config.TVERSKY_BETA,
+    ).to(device)
 
     optimizer = optim.AdamW(model.parameters(), lr=args.lr, weight_decay=1e-4)
     scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.epochs, eta_min=1e-6)
