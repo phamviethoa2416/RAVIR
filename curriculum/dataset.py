@@ -96,22 +96,28 @@ def build_datasets(
 ) -> tuple[Dataset, Dataset]:
     all_pairs: list[tuple[str, str]] = []
 
-    # ── DRIVE (training + test) ───────────────────────────────────────
+    # ── DRIVE (training; test GT is not provided in standard release) ─────────
     drive_base = os.path.join(data_root, "DRIVE")
     if os.path.isdir(drive_base):
-        drive_splits = [
-            ("training", "images", "1st_manual"),
-            ("test", "images", "1st_manual"),
-        ]
-        for split, img_sub, mask_sub in drive_splits:
-            img_dir = os.path.join(drive_base, split, img_sub)
-            mask_dir = os.path.join(drive_base, split, mask_sub)
-            if not (os.path.isdir(img_dir) and os.path.isdir(mask_dir)):
-                logger.warning("Skipping DRIVE %s — missing %s or %s", split, img_dir, mask_dir)
-                continue
+        # Training split (has vessel GT)
+        img_dir = os.path.join(drive_base, "training", "images")
+        mask_dir = os.path.join(drive_base, "training", "1st_manual")
+        if os.path.isdir(img_dir) and os.path.isdir(mask_dir):
             pairs = _pair_images_masks(img_dir, mask_dir)
-            logger.info("DRIVE-%-8s : %d image-mask pairs", split, len(pairs))
+            logger.info("DRIVE-%-8s : %d image-mask pairs", "training", len(pairs))
             all_pairs.extend(pairs)
+        else:
+            logger.warning("Skipping DRIVE training — missing %s or %s", img_dir, mask_dir)
+
+        # Optional: include test split only if masks exist (non-standard setups)
+        test_img_dir = os.path.join(drive_base, "test", "images")
+        test_mask_dir = os.path.join(drive_base, "test", "1st_manual")
+        if os.path.isdir(test_img_dir) and os.path.isdir(test_mask_dir):
+            pairs = _pair_images_masks(test_img_dir, test_mask_dir)
+            logger.info("DRIVE-%-8s : %d image-mask pairs", "test", len(pairs))
+            all_pairs.extend(pairs)
+        elif os.path.isdir(test_img_dir) and not os.path.isdir(test_mask_dir):
+            logger.info("DRIVE-test  : found images but no GT masks; skipping.")
     else:
         logger.warning("DRIVE directory not found under %s", data_root)
 

@@ -91,6 +91,94 @@ def visualize_predictions(
             saved += 1
 
 
+@torch.no_grad()
+def visualize_binary_predictions(
+        model,
+        loader,
+        device: str,
+        output_dir: str,
+        epoch: int,
+        num_samples: int = 3,
+        threshold: float = 0.5,
+):
+    from training import get_amp_dtype
+    from torch.amp import autocast
+
+    model.eval()
+    os.makedirs(output_dir, exist_ok=True)
+
+    amp_dtype = get_amp_dtype()
+    use_amp = Config.USE_AMP and device == "cuda"
+
+    saved = 0
+    for batch in loader:
+        if saved >= num_samples:
+            break
+
+        images = batch["image"].to(device, non_blocking=True)
+        masks = batch["mask"]
+        filenames = batch["filename"]
+
+        with autocast(device_type="cuda", dtype=amp_dtype, enabled=use_amp):
+            outputs = model(images)
+
+        logits = outputs.get("vessel_prob", None) if isinstance(outputs, dict) else None
+        if logits is None:
+            continue
+
+        probs = torch.sigmoid(logits).detach().cpu()
+        preds = (probs >= threshold).float()
+
+        for i in range(images.size(0)):
+            if saved >= num_samples:
+                break
+
+            # Support both 1ch and 3ch inputs
+            img = images[i].detach().cpu()
+            if img.size(0) == 1:
+                img_np = _denormalize(img[0])
+                img_show = (img_np * 255.0).clip(0, 255).astype(np.uint8)
+                img_show = np.stack([img_show] * 3, axis=-1)
+            else:
+                img_np = img.permute(1, 2, 0).numpy()
+                img_show = (img_np * 255.0).clip(0, 255).astype(np.uint8)
+
+            gt = masks[i]
+            if isinstance(gt, torch.Tensor):
+                gt_np = gt.squeeze().cpu().numpy()
+            else:
+                gt_np = np.asarray(gt).squeeze()
+
+            prob_np = probs[i, 0].numpy()
+            pred_np = preds[i, 0].numpy()
+
+            fig, axes = plt.subplots(1, 4, figsize=(18, 5))
+            axes[0].imshow(img_show)
+            axes[0].set_title("Input")
+
+            axes[1].imshow(gt_np, cmap="gray", vmin=0, vmax=1)
+            axes[1].set_title("GT (binary)")
+
+            axes[2].imshow(prob_np, cmap="magma", vmin=0, vmax=1)
+            axes[2].set_title("Prob (sigmoid)")
+
+            axes[3].imshow(pred_np, cmap="gray", vmin=0, vmax=1)
+            axes[3].set_title(f"Pred (thr={threshold:.2f})")
+
+            for ax in axes:
+                ax.axis("off")
+
+            plt.suptitle(f"Epoch {epoch} | {filenames[i]}", fontsize=14)
+            plt.tight_layout()
+            plt.savefig(
+                os.path.join(output_dir, f"epoch{epoch:03d}_bin_{saved:02d}_{filenames[i]}"),
+                dpi=120,
+                bbox_inches="tight",
+            )
+            plt.close(fig)
+            saved += 1
+
+
 def plot_training_curves(
         train_losses: list,
         val_losses: list,

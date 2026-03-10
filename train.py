@@ -26,7 +26,7 @@ from losses import BinaryTverskyLoss
 from models import RAVIRNet
 from training import get_amp_dtype
 from transform.ravir import RAVIRDataset
-from utils import seed_everything, setup_logging, plot_training_curves
+from utils import seed_everything, setup_logging, plot_training_curves, visualize_binary_predictions
 
 logger = logging.getLogger(__name__)
 
@@ -272,6 +272,12 @@ def train_round1(args):
                 "val_dices": val_dices,
             }, os.path.join(run_dir, f"checkpoint_epoch{epoch + 1:03d}.pth"))
 
+        if (epoch + 1) % 10 == 0 or epoch == 0:
+            try:
+                visualize_binary_predictions(model, val_loader, device, vis_dir, epoch + 1)
+            except Exception as e:
+                log.warning("  Visualization failed: %s", e)
+
         if len(train_losses) > 1:
             try:
                 plot_training_curves(train_losses, val_losses, val_dices, run_dir)
@@ -497,6 +503,12 @@ def train_round2(args):
                 "val_losses": val_losses,
                 "val_dices": val_dices,
             }, os.path.join(run_dir, f"checkpoint_epoch{epoch + 1:03d}.pth"))
+
+        if (epoch + 1) % 10 == 0 or epoch == 0:
+            try:
+                visualize_binary_predictions(model, val_loader, device, vis_dir, epoch + 1)
+            except Exception as e:
+                log.warning("  Visualization failed: %s", e)
 
         if len(train_losses) > 1:
             try:
