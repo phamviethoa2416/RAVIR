@@ -1,10 +1,7 @@
-from __future__ import annotations
-
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 
-from .encoder import PretrainedEncoder
+from .encoder import FeatureEncoder
 from .decoder import FeatureDecoder
 
 
@@ -13,76 +10,73 @@ class RAVIRNet(nn.Module):
             self,
             in_channels: int = 1,
             num_classes: int = 3,
-            encoder_name: str = "resnet34",
-            encoder_weights: str | None = "imagenet",
+            channels: list[int] | None = None,
             dropout_rate: float = 0.1,
             use_attention: bool = True,
-            freeze_encoder: bool = False,
-            binary_mode: bool = False,
     ):
         super().__init__()
-        self.binary_mode = binary_mode
+        if channels is None:
+            channels = [64, 128, 256, 512, 1024]
 
-        # ── Pretrained encoder ────────────────────────────────────────
-        self.encoder = PretrainedEncoder(
-            encoder_name=encoder_name,
+        self.encoder = FeatureEncoder(
             in_channels=in_channels,
-            weights=encoder_weights,
-            depth=5,
-            freeze_encoder=freeze_encoder,
+            channels=channels,
+            dropout_rate=dropout_rate,
+            use_attention=use_attention,
         )
-
-        # ── Decoder (channel sizes driven by encoder) ─────────────────
         self.decoder = FeatureDecoder(
-            skip_channels=self.encoder.skip_channels,
-            bottleneck_channels=self.encoder.bottleneck_channels,
+            channels=channels,
             dropout_rate=dropout_rate,
             use_attention=use_attention,
         )
 
-        dec_out = self.decoder.output_channels
+        c1 = channels[0]
 
-        self.final_up = nn.Sequential(
-            nn.ConvTranspose2d(dec_out, dec_out, kernel_size=2, stride=2, bias=False),
-            nn.BatchNorm2d(dec_out),
+        # Head 1: semantic segmentation (bg / artery / vein)
+        self.seg_head = nn.Conv2d(c1, num_classes, kernel_size=1)
+
+        # Head 2: binary vessel probability
+        self.vessel_prob_head = nn.Conv2d(c1, 1, kernel_size=1)
+
+        # Head 3: orientation field (cos θ, sin θ)
+        self.orientation_head = nn.Sequential(
+            nn.Conv2d(c1, c1 // 2, kernel_size=3, padding=1, bias=False),
+            nn.BatchNorm2d(c1 // 2),
             nn.ReLU(inplace=True),
+            nn.Conv2d(c1 // 2, 2, kernel_size=1),
         )
 
-        if not binary_mode:
-            self.seg_head = nn.Conv2d(dec_out, num_classes, kernel_size=1)
+        # Head 4: vessel width per type (artery, vein)
+        self.width_head = nn.Sequential(
+            nn.Conv2d(c1, c1 // 2, kernel_size=3, padding=1, bias=False),
+            nn.BatchNorm2d(c1 // 2),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(c1 // 2, 2, kernel_size=1),
+        )
 
-        self.vessel_prob_head = nn.Conv2d(dec_out, 1, kernel_size=1)
+        # Head 5: endpoint probability
+        self.endpoint_head = nn.Conv2d(c1, 1, kernel_size=1)
 
-        self._init_heads()
+        self._init_weights()
 
-    def _init_heads(self):
-        modules = [self.decoder, self.final_up, self.vessel_prob_head]
-        if not self.binary_mode:
-            modules.append(self.seg_head)
-        for module in modules:
-            for m in module.modules():
-                if isinstance(m, (nn.Conv2d, nn.ConvTranspose2d)):
-                    nn.init.kaiming_normal_(m.weight, mode="fan_out", nonlinearity="relu")
-                    if m.bias is not None:
-                        nn.init.constant_(m.bias, 0)
-                elif isinstance(m, (nn.BatchNorm2d, nn.GroupNorm)):
-                    nn.init.constant_(m.weight, 1)
+    def _init_weights(self):
+        for m in self.modules():
+            if isinstance(m, nn.Conv2d):
+                nn.init.kaiming_normal_(m.weight, mode="fan_out", nonlinearity="relu")
+                if m.bias is not None:
                     nn.init.constant_(m.bias, 0)
+            elif isinstance(m, nn.BatchNorm2d):
+                nn.init.constant_(m.weight, 1)
+                nn.init.constant_(m.bias, 0)
 
     def forward(self, x: torch.Tensor) -> dict[str, torch.Tensor]:
-        input_size = x.shape[2:]
-
         skips, bottleneck = self.encoder(x)
         features = self.decoder(skips, bottleneck)
-        features = self.final_up(features)
-
-        if features.shape[2:] != input_size:
-            features = F.interpolate(features, size=input_size, mode="bilinear", align_corners=False)
-
-        if self.binary_mode:
-            return {"vessel_prob": self.vessel_prob_head(features)}
 
         return {
             "segmentation": self.seg_head(features),
             "vessel_prob": self.vessel_prob_head(features),
+            "orientation": self.orientation_head(features),
+            "width": self.width_head(features),
+            "endpoint": self.endpoint_head(features),
         }

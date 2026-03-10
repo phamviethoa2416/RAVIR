@@ -24,7 +24,7 @@ from curriculum import (
 from curriculum.trainer import train_one_epoch_binary, validate_binary
 from losses import BinaryDiceBCELoss
 from models import RAVIRNet
-from training import train_one_epoch, validate, get_amp_dtype
+from training import get_amp_dtype
 from transform.ravir import RAVIRDataset
 from utils import seed_everything, setup_logging, plot_training_curves
 
@@ -53,20 +53,17 @@ def adapt_state_dict_channels(
         return state_dict
 
     new_sd = {}
-    adapted = False
     for key, value in state_dict.items():
         if (
-                not adapted
-                and value.ndim == 4
+                value.ndim == 4
                 and value.shape[1] == src_channels
-                and "encoder" in key
+                and "encoder.stage1" in key
         ):
             if tgt_channels < src_channels:
                 new_sd[key] = value.mean(dim=1, keepdim=True).repeat(1, tgt_channels, 1, 1)
             else:
                 repeats = tgt_channels // src_channels + 1
                 new_sd[key] = value.repeat(1, repeats, 1, 1)[:, :tgt_channels]
-            adapted = True
             continue
         new_sd[key] = value
     return new_sd
@@ -161,11 +158,9 @@ def train_round1(args):
     model = RAVIRNet(
         in_channels=3,
         num_classes=1,
-        encoder_name=Config.ENCODER_NAME,
-        encoder_weights=None,
+        channels=Config.CHANNELS,
         dropout_rate=Config.DROPOUT_RATE,
         use_attention=Config.USE_ATTENTION,
-        binary_mode=True,
     ).to(device)
 
     total_p = sum(p.numel() for p in model.parameters())
@@ -249,13 +244,13 @@ def train_round1(args):
                 "round": 1,
                 "in_channels": 3,
                 "config": {
-                    "encoder_name": Config.ENCODER_NAME,
+                    "channels": Config.CHANNELS,
                     "dropout_rate": Config.DROPOUT_RATE,
                     "use_attention": Config.USE_ATTENTION,
                     "patch_size": patch_size,
                 },
             }, os.path.join(run_dir, "round1_best.pth"))
-            log.info("  ★ New best! Dice=%.4f  → round1_best.pth", best_dice)
+            log.info("  * New best! Dice=%.4f  -> round1_best.pth", best_dice)
         else:
             patience += 1
             log.info("  No improvement. Patience: %d/%d", patience, args.patience)
@@ -369,15 +364,13 @@ def train_round2(args):
     log.info("  Epochs     : %d", args.epochs)
     log.info("  LR         : %.1e", args.lr)
 
-    # ── Model — load Round 1 weights, adapt 3ch → 1ch ────────────────
+    # ── Model — load Round 1 weights, adapt 3ch -> 1ch ────────────────
     model = RAVIRNet(
         in_channels=1,
         num_classes=1,
-        encoder_name=Config.ENCODER_NAME,
-        encoder_weights=None,
+        channels=Config.CHANNELS,
         dropout_rate=Config.DROPOUT_RATE,
         use_attention=Config.USE_ATTENTION,
-        binary_mode=True,
     ).to(device)
 
     if args.checkpoint and os.path.isfile(args.checkpoint):
@@ -474,13 +467,13 @@ def train_round2(args):
                 "round": 2,
                 "in_channels": 1,
                 "config": {
-                    "encoder_name": Config.ENCODER_NAME,
+                    "channels": Config.CHANNELS,
                     "dropout_rate": Config.DROPOUT_RATE,
                     "use_attention": Config.USE_ATTENTION,
                     "patch_size": patch_size,
                 },
             }, os.path.join(run_dir, "round2_best.pth"))
-            log.info("  ★ New best! Dice=%.4f  → round2_best.pth", best_dice)
+            log.info("  * New best! Dice=%.4f  -> round2_best.pth", best_dice)
         else:
             patience += 1
             log.info("  No improvement. Patience: %d/%d", patience, args.patience)

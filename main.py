@@ -78,8 +78,7 @@ def summary():
     model = RAVIRNet(
         in_channels=Config.IN_CHANNELS,
         num_classes=Config.NUM_CLASSES,
-        encoder_name=Config.ENCODER_NAME,
-        encoder_weights=Config.ENCODER_WEIGHTS,
+        channels=Config.CHANNELS,
         dropout_rate=Config.DROPOUT_RATE,
         use_attention=Config.USE_ATTENTION,
     ).to(Config.DEVICE)
@@ -88,9 +87,8 @@ def summary():
     trainable = sum(p.numel() for p in model.parameters() if p.requires_grad)
 
     print(f"Model Architecture:")
-    print(f"  Encoder    : {Config.ENCODER_NAME} ({Config.ENCODER_WEIGHTS})")
-    print(f"  Input      : {Config.IN_CHANNELS}ch  {Config.IMG_SIZE}×{Config.IMG_SIZE}")
-    print(f"  Enc channels: {model.encoder.out_channels}")
+    print(f"  Channels   : {Config.CHANNELS}")
+    print(f"  Input      : {Config.IN_CHANNELS}ch  {Config.IMG_SIZE}x{Config.IMG_SIZE}")
     print(f"  Dropout    : {Config.DROPOUT_RATE}")
     print(f"  Params     : {total:,} total  /  {trainable:,} trainable")
     print("-" * 60)
@@ -130,6 +128,7 @@ def train(args):
         ("Weight Decay", Config.WEIGHT_DECAY),
         ("Epochs", Config.EPOCHS),
         ("Early Stopping", f"patience={Config.EARLY_STOPPING_PATIENCE}"),
+        ("Channels", Config.CHANNELS),
         ("Scheduler", f"{Config.LR_SCHEDULER} (T0={Config.COSINE_T0}, Tmult={Config.COSINE_T_MULT})"),
         ("Loss", f"TverskyCE (α={Config.TVERSKY_ALPHA}, β={Config.TVERSKY_BETA}) + VesselProb"),
         ("Label Smoothing", Config.LABEL_SMOOTHING),
@@ -187,8 +186,7 @@ def train(args):
     model = RAVIRNet(
         in_channels=Config.IN_CHANNELS,
         num_classes=Config.NUM_CLASSES,
-        encoder_name=Config.ENCODER_NAME,
-        encoder_weights=Config.ENCODER_WEIGHTS,
+        channels=Config.CHANNELS,
         dropout_rate=Config.DROPOUT_RATE,
         use_attention=Config.USE_ATTENTION,
     ).to(device)
@@ -334,8 +332,7 @@ def train(args):
                 "best_dice": best_dice,
                 "metrics": metrics,
                 "config": {
-                    "encoder_name": Config.ENCODER_NAME,
-                    "encoder_weights": Config.ENCODER_WEIGHTS,
+                    "channels": Config.CHANNELS,
                     "num_classes": Config.NUM_CLASSES,
                     "img_size": Config.IMG_SIZE,
                     "dropout": Config.DROPOUT_RATE,
