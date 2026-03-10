@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from .blocks import ResidualBlock, CBAMBlock
+from .blocks import ResidualBlock, CBAMBlock, AttentionGate
 
 
 class DecoderStage(nn.Module):
@@ -15,18 +15,29 @@ class DecoderStage(nn.Module):
             use_attention: bool = True,
     ):
         super().__init__()
-        self.up_conv = nn.Conv2d(in_channels, in_channels // 2, kernel_size=1)
-        self.residual = ResidualBlock(
-            in_channels // 2 + skip_channels, out_channels, dropout_rate,
+        up_channels = in_channels // 2
+        self.up_conv = nn.Conv2d(in_channels, up_channels, kernel_size=1)
+
+        self.attention_gate = (
+            AttentionGate(gate_channels=up_channels, skip_channels=skip_channels)
+            if use_attention else None
         )
-        self.attention = CBAMBlock(out_channels) if use_attention else nn.Identity()
+
+        self.residual = ResidualBlock(
+            up_channels + skip_channels, out_channels, dropout_rate,
+        )
+        self.cbam = CBAMBlock(out_channels) if use_attention else nn.Identity()
 
     def forward(self, x: torch.Tensor, skip: torch.Tensor) -> torch.Tensor:
         x = F.interpolate(x, size=skip.shape[2:], mode="bilinear", align_corners=False)
         x = self.up_conv(x)
+
+        if self.attention_gate is not None:
+            skip = self.attention_gate(gate=x, skip=skip)
+
         x = torch.cat([skip, x], dim=1)
         x = self.residual(x)
-        x = self.attention(x)
+        x = self.cbam(x)
         return x
 
 
@@ -50,12 +61,12 @@ class FeatureDecoder(nn.Module):
 
     def forward(
             self, skips: list[torch.Tensor], bottleneck: torch.Tensor,
-    ) -> torch.Tensor:
+    ) -> tuple[torch.Tensor, list[torch.Tensor]]:
         skip1, skip2, skip3, skip4 = skips
 
-        x = self.dec4(bottleneck, skip4)
-        x = self.dec3(x, skip3)
-        x = self.dec2(x, skip2)
-        x = self.dec1(x, skip1)
+        d4 = self.dec4(bottleneck, skip4)
+        d3 = self.dec3(d4, skip3)
+        d2 = self.dec2(d3, skip2)
+        d1 = self.dec1(d2, skip1)
 
-        return x
+        return d1, [d4, d3, d2]
