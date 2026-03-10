@@ -18,8 +18,10 @@ class RAVIRNet(nn.Module):
             dropout_rate: float = 0.1,
             use_attention: bool = True,
             freeze_encoder: bool = False,
+            binary_mode: bool = False,
     ):
         super().__init__()
+        self.binary_mode = binary_mode
 
         # ── Pretrained encoder ────────────────────────────────────────
         self.encoder = PretrainedEncoder(
@@ -46,16 +48,18 @@ class RAVIRNet(nn.Module):
             nn.ReLU(inplace=True),
         )
 
-        # ── Head 1: semantic segmentation (bg / artery / vein) ────────
-        self.seg_head = nn.Conv2d(dec_out, num_classes, kernel_size=1)
+        if not binary_mode:
+            self.seg_head = nn.Conv2d(dec_out, num_classes, kernel_size=1)
 
-        # ── Head 2: binary vessel probability ─────────────────────────
         self.vessel_prob_head = nn.Conv2d(dec_out, 1, kernel_size=1)
 
         self._init_heads()
 
     def _init_heads(self):
-        for module in [self.decoder, self.final_up, self.seg_head, self.vessel_prob_head]:
+        modules = [self.decoder, self.final_up, self.vessel_prob_head]
+        if not self.binary_mode:
+            modules.append(self.seg_head)
+        for module in modules:
             for m in module.modules():
                 if isinstance(m, (nn.Conv2d, nn.ConvTranspose2d)):
                     nn.init.kaiming_normal_(m.weight, mode="fan_out", nonlinearity="relu")
@@ -74,6 +78,9 @@ class RAVIRNet(nn.Module):
 
         if features.shape[2:] != input_size:
             features = F.interpolate(features, size=input_size, mode="bilinear", align_corners=False)
+
+        if self.binary_mode:
+            return {"vessel_prob": self.vessel_prob_head(features)}
 
         return {
             "segmentation": self.seg_head(features),

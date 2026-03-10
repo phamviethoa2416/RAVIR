@@ -13,24 +13,24 @@ from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
 
 from config import Config
-from curriculum.dataset import build_datasets
-from curriculum.trainer import train_one_epoch, validate
-from losses import BinaryDiceBCELoss
-from metrics import BinarySegmentationMetrics
-from models import RAVIRNet
-from training import get_amp_dtype
-from transform import (
+from curriculum import (
+    BinarySegmentationMetrics,
+    build_datasets,
     get_round1_train_transform,
     get_round1_val_transform,
     get_round2_train_transform,
     get_round2_val_transform,
 )
+from curriculum.trainer import train_one_epoch_binary, validate_binary
+from losses import BinaryDiceBCELoss
+from models import RAVIRNet
+from training import train_one_epoch, validate, get_amp_dtype
 from transform.ravir import RAVIRDataset
 from utils import seed_everything, setup_logging, plot_training_curves
 
 logger = logging.getLogger(__name__)
 
-DATASET_ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "dataset")
+DATASET_ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "datasets")
 
 def _create_scaler() -> GradScaler | None:
     if Config.USE_AMP and Config.AMP_DTYPE == "float16":
@@ -191,7 +191,7 @@ def train_round1(args):
         t0 = time.time()
         lr = optimizer.param_groups[0]["lr"]
 
-        train_loss = train_one_epoch(
+        train_loss = train_one_epoch_binary(
             model=model,
             loader=train_loader,
             criterion=criterion,
@@ -203,7 +203,7 @@ def train_round1(args):
             amp_dtype=amp_dtype,
         )
 
-        val_loss, metrics = validate(
+        val_loss, metrics = validate_binary(
             model=model,
             loader=val_loader,
             criterion=criterion,
@@ -416,7 +416,7 @@ def train_round2(args):
         t0 = time.time()
         lr = optimizer.param_groups[0]["lr"]
 
-        train_loss = train_one_epoch(
+        train_loss = train_one_epoch_binary(
             model=model,
             loader=train_loader,
             criterion=criterion,
@@ -428,7 +428,7 @@ def train_round2(args):
             amp_dtype=amp_dtype,
         )
 
-        val_loss, metrics = validate(
+        val_loss, metrics = validate_binary(
             model=model,
             loader=val_loader,
             criterion=criterion,
@@ -563,7 +563,7 @@ def main():
         if args.epochs is None:
             args.epochs = 150
         if args.lr is None:
-            args.lr = 1e-3
+            args.lr = 1e-4
         train_round1(args)
     else:
         if args.epochs is None:
@@ -576,5 +576,5 @@ def main():
         train_round2(args)
 
 
-if __name__ == "_main_":
+if __name__ == "__main__":
     main()

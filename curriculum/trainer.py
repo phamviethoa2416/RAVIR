@@ -6,7 +6,7 @@ from torch.amp import autocast, GradScaler
 from tqdm import tqdm
 
 
-def train_one_epoch(
+def train_one_epoch_binary(
         model: nn.Module,
         loader,
         criterion: nn.Module,
@@ -57,7 +57,7 @@ def train_one_epoch(
 
 
 @torch.no_grad()
-def validate(
+def validate_binary(
         model: nn.Module,
         loader,
         criterion: nn.Module,
