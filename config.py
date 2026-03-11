@@ -135,6 +135,14 @@ class Config:
     DROPOUT_RATE = 0.1                      # dropout probability
     USE_ATTENTION = True                    # enable CBAM attention
 
+    # Encoder options:
+    #   "custom" -> handmade FeatureEncoder (default, as before)
+    #   "smp"    -> pretrained encoder from segmentation_models_pytorch + timm
+    ENCODER_TYPE = "custom"
+    SMP_ENCODER_NAME = "timm-resnet34"
+    SMP_ENCODER_WEIGHTS = "imagenet"
+    SMP_ENCODER_DEPTH = 5
+
     # ── Training (auto-scaled) ─────────────────────────────────────────────────
     BATCH_SIZE = _GPU["batch_size"]
     GRAD_ACCUMULATION_STEPS = _GPU["grad_accum"]

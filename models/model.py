@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from .encoder import FeatureEncoder
+from .encoder import FeatureEncoder, SMPFeatureEncoder
 from .decoder import FeatureDecoder
 from .blocks import ASPP
 
@@ -16,19 +16,42 @@ class RAVIRNet(nn.Module):
             dropout_rate: float = 0.1,
             use_attention: bool = True,
             use_deep_supervision: bool = True,
+            # Encoder configuration
+            encoder_type: str = "custom",          # "custom" | "smp"
+            encoder_name: str | None = None,       # e.g. "timm-resnet34"
+            encoder_weights: str | None = "imagenet",
+            encoder_depth: int = 5,
     ):
+        """
+        encoder_type:
+          - "custom": use handcrafted FeatureEncoder (default, backwards compatible)
+          - "smp"   : use SMPFeatureEncoder with a timm backbone
+        """
         super().__init__()
         if channels is None:
             channels = [64, 128, 256, 512, 1024]
 
         self.use_deep_supervision = use_deep_supervision
 
-        self.encoder = FeatureEncoder(
-            in_channels=in_channels,
-            channels=channels,
-            dropout_rate=dropout_rate,
-            use_attention=use_attention,
-        )
+        # ── Encoder selection ────────────────────────────────────────────
+        if encoder_type.lower() == "smp":
+            if encoder_name is None:
+                encoder_name = "timm-resnet34"
+            smp_encoder = SMPFeatureEncoder(
+                encoder_name=encoder_name,
+                in_channels=in_channels,
+                depth=encoder_depth,
+                weights=encoder_weights,
+            )
+            self.encoder = smp_encoder
+            channels = smp_encoder.out_channels
+        else:
+            self.encoder = FeatureEncoder(
+                in_channels=in_channels,
+                channels=channels,
+                dropout_rate=dropout_rate,
+                use_attention=use_attention,
+            )
 
         self.aspp = ASPP(channels[-1], channels[-1])
 

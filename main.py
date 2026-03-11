@@ -81,6 +81,10 @@ def summary():
         channels=Config.CHANNELS,
         dropout_rate=Config.DROPOUT_RATE,
         use_attention=Config.USE_ATTENTION,
+        encoder_type=Config.ENCODER_TYPE,
+        encoder_name=Config.SMP_ENCODER_NAME,
+        encoder_weights=Config.SMP_ENCODER_WEIGHTS,
+        encoder_depth=Config.SMP_ENCODER_DEPTH,
     ).to(Config.DEVICE)
 
     total = sum(p.numel() for p in model.parameters())
@@ -189,6 +193,10 @@ def train(args):
         channels=Config.CHANNELS,
         dropout_rate=Config.DROPOUT_RATE,
         use_attention=Config.USE_ATTENTION,
+        encoder_type=Config.ENCODER_TYPE,
+        encoder_name=Config.SMP_ENCODER_NAME,
+        encoder_weights=Config.SMP_ENCODER_WEIGHTS,
+        encoder_depth=Config.SMP_ENCODER_DEPTH,
     ).to(device)
 
     if Config.COMPILE_MODEL and hasattr(torch, "compile"):
@@ -241,7 +249,16 @@ def train(args):
     if args.resume and os.path.isfile(args.resume):
         logger.info(f"Resuming from checkpoint: {args.resume}")
         checkpoint = torch.load(args.resume, map_location=device, weights_only=False)
-        missing, unexpected = model.load_state_dict(checkpoint["model_state_dict"], strict=False)
+
+        # Filter checkpoint to avoid size-mismatch when encoder config changes.
+        model_sd = model.state_dict()
+        raw_sd = checkpoint["model_state_dict"]
+        filtered_sd = {
+            k: v for k, v in raw_sd.items()
+            if k in model_sd and model_sd[k].shape == v.shape
+        }
+
+        missing, unexpected = model.load_state_dict(filtered_sd, strict=False)
         if missing:
             logger.info(f"  Missing keys : {missing}")
         if unexpected:

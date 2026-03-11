@@ -69,6 +69,21 @@ def adapt_state_dict_channels(
     return new_sd
 
 
+def _filter_state_dict_for_model(state_dict: dict, model: torch.nn.Module) -> dict:
+    """Keep only keys whose shapes match the target model.
+
+    This prevents size-mismatch errors when loading checkpoints with a different
+    encoder configuration (e.g., switching from 3ch RGB to 1ch IR or from
+    custom encoder to SMP encoder).
+    """
+    model_sd = model.state_dict()
+    filtered: dict = {}
+    for key, value in state_dict.items():
+        if key in model_sd and model_sd[key].shape == value.shape:
+            filtered[key] = value
+    return filtered
+
+
 # ── RAVIR binary wrapper ─────────────────────────────────────────────────────
 
 
@@ -164,6 +179,10 @@ def train_round1(args):
         channels=Config.CHANNELS,
         dropout_rate=Config.DROPOUT_RATE,
         use_attention=Config.USE_ATTENTION,
+        encoder_type=Config.ENCODER_TYPE,
+        encoder_name=Config.SMP_ENCODER_NAME,
+        encoder_weights=Config.SMP_ENCODER_WEIGHTS,
+        encoder_depth=Config.SMP_ENCODER_DEPTH,
     ).to(device)
 
     total_p = sum(p.numel() for p in model.parameters())
@@ -384,12 +403,24 @@ def train_round2(args):
         channels=Config.CHANNELS,
         dropout_rate=Config.DROPOUT_RATE,
         use_attention=Config.USE_ATTENTION,
+        encoder_type=Config.ENCODER_TYPE,
+        encoder_name=Config.SMP_ENCODER_NAME,
+        encoder_weights=Config.SMP_ENCODER_WEIGHTS,
+        encoder_depth=Config.SMP_ENCODER_DEPTH,
     ).to(device)
 
     if args.checkpoint and os.path.isfile(args.checkpoint):
         ckpt = torch.load(args.checkpoint, map_location=device, weights_only=False)
         src_channels = ckpt.get("in_channels", 3)
-        sd = adapt_state_dict_channels(ckpt["model_state_dict"], src_channels, tgt_channels=1)
+
+        # For the handcrafted encoder, adapt first conv to new input channels.
+        # For SMP encoders (or other configs), rely on generic shape filtering.
+        if Config.ENCODER_TYPE == "custom":
+            sd = adapt_state_dict_channels(ckpt["model_state_dict"], src_channels, tgt_channels=1)
+        else:
+            sd = ckpt["model_state_dict"]
+
+        sd = _filter_state_dict_for_model(sd, model)
         missing, unexpected = model.load_state_dict(sd, strict=False)
         log.info("Loaded Round 1 checkpoint (epoch %d, dice=%.4f)",
                  ckpt.get("epoch", -1), ckpt.get("best_dice", -1))

@@ -27,6 +27,8 @@ class EncoderStage(nn.Module):
 
 
 class FeatureEncoder(nn.Module):
+    """Original handcrafted encoder used in RAVIRNet."""
+
     def __init__(
             self,
             in_channels: int = 1,
@@ -58,3 +60,65 @@ class FeatureEncoder(nn.Module):
         x = self.bottleneck_att(x)
 
         return [skip1, skip2, skip3, skip4], x
+
+
+class SMPFeatureEncoder(nn.Module):
+    """Encoder wrapper using segmentation_models_pytorch + timm backbones.
+
+    This exposes the same interface as FeatureEncoder:
+      forward(x) -> (skips[4], bottleneck)
+    and records the channel progression so that the decoder can be built
+    to match the pretrained backbone.
+    """
+
+    def __init__(
+            self,
+            encoder_name: str,
+            in_channels: int = 3,
+            depth: int = 5,
+            weights: str | None = "imagenet",
+    ):
+        super().__init__()
+        try:
+            import segmentation_models_pytorch as smp
+        except ImportError as exc:
+            raise ImportError(
+                "segmentation_models_pytorch is required for SMPFeatureEncoder. "
+                "Install it with `pip install segmentation-models-pytorch`."
+            ) from exc
+
+        self.encoder = smp.encoders.get_encoder(
+            encoder_name,
+            in_channels=in_channels,
+            depth=depth,
+            weights=weights,
+        )
+
+        # smp encoders expose out_channels for each stage (len = depth + 1).
+        enc_channels = list(self.encoder.out_channels)
+        if len(enc_channels) < 5:
+            raise ValueError(
+                f"Encoder '{encoder_name}' (depth={depth}) exposes only "
+                f"{len(enc_channels)} feature levels, but at least 5 are required "
+                "to provide 4 skip connections + bottleneck.",
+            )
+
+        # Use last 5 feature levels as [c1, c2, c3, c4, c5]
+        self.channels: list[int] = enc_channels[-5:]
+
+    @property
+    def out_channels(self) -> list[int]:
+        """Channel progression [c1, c2, c3, c4, c5] matching skips + bottleneck."""
+        return self.channels
+
+    def forward(self, x: torch.Tensor) -> tuple[list[torch.Tensor], torch.Tensor]:
+        # smp encoder returns a list of feature maps for each stage (len = depth + 1)
+        features = self.encoder(x)
+        if len(features) < 5:
+            raise RuntimeError(
+                f"Encoder produced only {len(features)} feature maps; expected at least 5.",
+            )
+
+        # Take last 5 feature maps: smallest spatial size is bottleneck
+        f1, f2, f3, f4, bottleneck = features[-5:]
+        return [f1, f2, f3, f4], bottleneck
