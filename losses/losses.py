@@ -104,6 +104,85 @@ class BinaryTverskyLoss(nn.Module):
         )
         return 1.0 - tversky.mean()
 
+class BinarySkeletonRecallLoss(nn.Module):
+    """Soft Skeleton Recall (Kirchhoff et al., ECCV 2024).
+
+    Computes soft recall of the prediction on a precomputed *tubed skeleton*
+    of the ground truth.  Operates on raw logits (sigmoid applied inside).
+    """
+
+    def __init__(self, smooth: float = 1e-5):
+        super().__init__()
+        self.smooth = smooth
+
+    def forward(
+            self,
+            logits: torch.Tensor,
+            skeleton: torch.Tensor,
+    ) -> torch.Tensor:
+        probs = torch.sigmoid(logits)
+        skeleton = skeleton.float()
+
+        inter = (probs * skeleton).sum(dim=(2, 3))
+        skel_sum = skeleton.sum(dim=(2, 3))
+
+        recall = (inter + self.smooth) / (skel_sum.clamp(min=self.smooth) + self.smooth)
+        return 1.0 - recall.mean()
+
+
+class BinaryDiceBCESkelRecallLoss(nn.Module):
+    """Dice + BCE + Skeleton Recall for binary vessel segmentation.
+
+    L = w_dice * L_dice + w_bce * L_bce + w_skel * L_skeleton_recall
+
+    Reference: "Skeleton Recall Loss for Connectivity Conserving and
+    Resource Efficient Segmentation of Thin Tubular Structures"
+    (Kirchhoff et al., ECCV 2024)
+    """
+
+    def __init__(
+            self,
+            weight_dice: float = 1.0,
+            weight_bce: float = 1.0,
+            weight_skel: float = 1.0,
+            smooth: float = 1e-5,
+    ):
+        super().__init__()
+        self.weight_dice = weight_dice
+        self.weight_bce = weight_bce
+        self.weight_skel = weight_skel
+        self.smooth = smooth
+
+    def forward(
+            self,
+            logits: torch.Tensor,
+            targets: torch.Tensor,
+            skeleton: torch.Tensor | None = None,
+    ) -> torch.Tensor:
+        targets = targets.float()
+
+        bce = F.binary_cross_entropy_with_logits(logits, targets)
+
+        probs = torch.sigmoid(logits)
+        intersection = (probs * targets).sum(dim=(2, 3))
+        cardinality = probs.sum(dim=(2, 3)) + targets.sum(dim=(2, 3))
+        dice = (2.0 * intersection + self.smooth) / (cardinality + self.smooth)
+        dice_loss = 1.0 - dice.mean()
+
+        total = self.weight_dice * dice_loss + self.weight_bce * bce
+
+        if skeleton is not None:
+            skeleton = skeleton.float()
+            skel_inter = (probs * skeleton).sum(dim=(2, 3))
+            skel_sum = skeleton.sum(dim=(2, 3))
+            skel_recall = (skel_inter + self.smooth) / (
+                skel_sum.clamp(min=self.smooth) + self.smooth
+            )
+            total = total + self.weight_skel * (1.0 - skel_recall.mean())
+
+        return total
+
+
 class CombinedLoss(nn.Module):
     """CrossEntropy + Dice loss for semantic segmentation."""
 

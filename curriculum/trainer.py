@@ -2,8 +2,17 @@ from __future__ import annotations
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from torch.amp import autocast, GradScaler
 from tqdm import tqdm
+
+
+def _call_criterion(criterion, logits, targets, skeleton=None):
+    """Call criterion with skeleton if it accepts the argument."""
+    try:
+        return criterion(logits, targets, skeleton=skeleton)
+    except TypeError:
+        return criterion(logits, targets)
 
 
 def train_one_epoch_binary(
@@ -26,19 +35,31 @@ def train_one_epoch_binary(
     for step, batch in enumerate(pbar):
         images = batch["image"].to(device, non_blocking=True)
         masks = batch["mask"].to(device, non_blocking=True)
+        skeletons = batch.get("skeleton")
+        if skeletons is not None:
+            skeletons = skeletons.to(device, non_blocking=True)
 
         with autocast(device_type="cuda", dtype=amp_dtype, enabled=use_amp):
             outputs = model(images)
-            main_loss = criterion(outputs["vessel_prob"], masks)
+            main_loss = _call_criterion(
+                criterion, outputs["vessel_prob"], masks, skeleton=skeletons,
+            )
 
-            # Deep supervision: auxiliary segmentation heads (if available)
             if isinstance(outputs, dict) and "deep_supervision" in outputs:
                 ds_maps = outputs["deep_supervision"]
-                # Weights for deeper to shallower outputs
                 ds_weights = [0.5, 0.3, 0.2]
                 ds_loss = 0.0
                 for w, ds_logits in zip(ds_weights, ds_maps):
-                    ds_loss = ds_loss + w * criterion(ds_logits, masks)
+                    ds_skel = None
+                    if skeletons is not None and ds_logits.shape[2:] != skeletons.shape[2:]:
+                        ds_skel = F.interpolate(
+                            skeletons, size=ds_logits.shape[2:], mode="nearest",
+                        )
+                    elif skeletons is not None:
+                        ds_skel = skeletons
+                    ds_loss = ds_loss + w * _call_criterion(
+                        criterion, ds_logits, masks, skeleton=ds_skel,
+                    )
                 loss = main_loss + ds_loss
             else:
                 loss = main_loss
@@ -87,17 +108,31 @@ def validate_binary(
     for batch in pbar:
         images = batch["image"].to(device, non_blocking=True)
         masks = batch["mask"].to(device, non_blocking=True)
+        skeletons = batch.get("skeleton")
+        if skeletons is not None:
+            skeletons = skeletons.to(device, non_blocking=True)
 
         with autocast(device_type="cuda", dtype=amp_dtype, enabled=use_amp):
             outputs = model(images)
-            main_loss = criterion(outputs["vessel_prob"], masks)
+            main_loss = _call_criterion(
+                criterion, outputs["vessel_prob"], masks, skeleton=skeletons,
+            )
 
             if isinstance(outputs, dict) and "deep_supervision" in outputs:
                 ds_maps = outputs["deep_supervision"]
                 ds_weights = [0.5, 0.3, 0.2]
                 ds_loss = 0.0
                 for w, ds_logits in zip(ds_weights, ds_maps):
-                    ds_loss = ds_loss + w * criterion(ds_logits, masks)
+                    ds_skel = None
+                    if skeletons is not None and ds_logits.shape[2:] != skeletons.shape[2:]:
+                        ds_skel = F.interpolate(
+                            skeletons, size=ds_logits.shape[2:], mode="nearest",
+                        )
+                    elif skeletons is not None:
+                        ds_skel = skeletons
+                    ds_loss = ds_loss + w * _call_criterion(
+                        criterion, ds_logits, masks, skeleton=ds_skel,
+                    )
                 loss = main_loss + ds_loss
             else:
                 loss = main_loss

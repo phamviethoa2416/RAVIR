@@ -7,6 +7,8 @@ from .losses import (
     MultiHeadLoss,
     BinaryDiceBCELoss,
     BinaryTverskyLoss,
+    BinarySkeletonRecallLoss,
+    BinaryDiceBCESkelRecallLoss,
 )
 
 __all__ = [
@@ -18,4 +20,6 @@ __all__ = [
     "MultiHeadLoss",
     "BinaryDiceBCELoss",
     "BinaryTverskyLoss",
+    "BinarySkeletonRecallLoss",
+    "BinaryDiceBCESkelRecallLoss",
 ]

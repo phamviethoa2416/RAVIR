@@ -22,7 +22,7 @@ from curriculum import (
     get_round2_val_transform,
 )
 from curriculum.trainer import train_one_epoch_binary, validate_binary
-from losses import BinaryTverskyLoss
+from losses import BinaryDiceBCESkelRecallLoss
 from models import RAVIRNet
 from training import get_amp_dtype
 from transform.ravir import RAVIRDataset
@@ -83,11 +83,14 @@ class RAVIRBinaryDataset(torch.utils.data.Dataset):
 
     def __getitem__(self, idx: int) -> dict:
         sample = self.ds[idx]
-        return {
+        result = {
             "image": sample["image"],
             "mask": sample["vessel_prob"],
             "filename": sample["filename"],
         }
+        if "skeleton" in sample:
+            result["skeleton"] = sample["skeleton"]
+        return result
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -168,9 +171,10 @@ def train_round1(args):
     log.info("  Params    : %s total / %s trainable", f"{total_p:,}", f"{train_p:,}")
 
     # ── Loss / Optimizer / Scheduler ──────────────────────────────────
-    criterion = BinaryTverskyLoss(
-        alpha=Config.TVERSKY_ALPHA,
-        beta=Config.TVERSKY_BETA,
+    criterion = BinaryDiceBCESkelRecallLoss(
+        weight_dice=1.0,
+        weight_bce=1.0,
+        weight_skel=1.0,
     ).to(device)
 
     optimizer = optim.AdamW(model.parameters(), lr=args.lr, weight_decay=1e-4)
@@ -400,9 +404,10 @@ def train_round2(args):
     log.info("  Params     : %s", f"{total_p:,}")
 
     # ── Loss / Optimizer / Scheduler ──────────────────────────────────
-    criterion = BinaryTverskyLoss(
-        alpha=Config.TVERSKY_ALPHA,
-        beta=Config.TVERSKY_BETA,
+    criterion = BinaryDiceBCESkelRecallLoss(
+        weight_dice=1.0,
+        weight_bce=1.0,
+        weight_skel=1.0,
     ).to(device)
 
     optimizer = optim.AdamW(model.parameters(), lr=args.lr, weight_decay=1e-4)

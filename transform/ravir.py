@@ -3,6 +3,7 @@ import os
 import numpy as np
 import torch
 from PIL import Image
+from skimage.morphology import skeletonize, dilation, disk
 from torch.utils.data import Dataset
 
 from config import Config
@@ -92,9 +93,20 @@ class RAVIRDataset(Dataset):
         # ── Vessel probability: derived directly from mask tensor ─────
         vessel_prob = (mask > 0).float().unsqueeze(0)   # (1, H, W)
 
+        # ── Tubed skeleton (computed after augmentation) ──────────────
+        vp_np = vessel_prob.squeeze().numpy()
+        binary = vp_np > 0
+        if binary.any():
+            skel = skeletonize(binary)
+            skel = dilation(skel, disk(2)).astype(np.float32)
+        else:
+            skel = np.zeros_like(vp_np, dtype=np.float32)
+        skeleton = torch.from_numpy(skel).float().unsqueeze(0)
+
         return {
             "image": image,
             "mask": mask,
             "vessel_prob": vessel_prob,
+            "skeleton": skeleton,
             "filename": filename,
         }

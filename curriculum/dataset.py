@@ -2,11 +2,11 @@ from __future__ import annotations
 
 import logging
 import os
-from fileinput import filename
 
 import cv2
 import numpy as np
 import torch
+from skimage.morphology import skeletonize, dilation, disk
 from torch.utils.data import Dataset
 
 logger = logging.getLogger(__name__)
@@ -40,6 +40,17 @@ def _pair_images_masks(img_dir: str, mask_dir: str) -> list[tuple[str, str]]:
         )
 
     return list(zip(img_sorted, mask_sorted))
+
+def _compute_tubed_skeleton(mask_np: np.ndarray, tube_radius: int = 2) -> np.ndarray:
+    """Skeletonize a binary mask and dilate to form a tube (Kirchhoff et al., ECCV 2024)."""
+    binary = (mask_np > 0).astype(bool)
+    if not binary.any():
+        return np.zeros_like(mask_np, dtype=np.float32)
+    skel = skeletonize(binary)
+    footprint = disk(tube_radius)
+    tubed = dilation(skel, footprint).astype(np.float32)
+    return tubed
+
 
 class RetinalVesselDataset(Dataset):
     def __init__(
@@ -81,9 +92,15 @@ class RetinalVesselDataset(Dataset):
         elif isinstance(mask, np.ndarray) and mask.ndim == 2:
             mask = torch.from_numpy(mask).float().unsqueeze(0)
 
+        # Compute tubed skeleton *after* augmentation
+        mask_for_skel = mask.squeeze().numpy() if isinstance(mask, torch.Tensor) else mask.squeeze()
+        skeleton = _compute_tubed_skeleton(mask_for_skel)
+        skeleton = torch.from_numpy(skeleton).float().unsqueeze(0)
+
         return {
             "image": image,
             "mask": mask,
+            "skeleton": skeleton,
             "filename": os.path.basename(img_path),
         }
 
