@@ -241,7 +241,11 @@ def train(args):
     if args.resume and os.path.isfile(args.resume):
         logger.info(f"Resuming from checkpoint: {args.resume}")
         checkpoint = torch.load(args.resume, map_location=device, weights_only=False)
-        model.load_state_dict(checkpoint["model_state_dict"])
+        missing, unexpected = model.load_state_dict(checkpoint["model_state_dict"], strict=False)
+        if missing:
+            logger.info(f"  Missing keys : {missing}")
+        if unexpected:
+            logger.info(f"  Unexpected   : {unexpected}")
         optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
         scheduler.load_state_dict(checkpoint["scheduler_state_dict"])
         start_epoch = checkpoint["epoch"]

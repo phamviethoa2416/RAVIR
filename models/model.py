@@ -46,25 +46,6 @@ class RAVIRNet(nn.Module):
         # Head 2: binary vessel probability
         self.vessel_prob_head = nn.Conv2d(c1, 1, kernel_size=1)
 
-        # Head 3: orientation field (cos θ, sin θ)
-        self.orientation_head = nn.Sequential(
-            nn.Conv2d(c1, c1 // 2, kernel_size=3, padding=1, bias=False),
-            nn.BatchNorm2d(c1 // 2),
-            nn.ReLU(inplace=True),
-            nn.Conv2d(c1 // 2, 2, kernel_size=1),
-        )
-
-        # Head 4: vessel width per type (artery, vein)
-        self.width_head = nn.Sequential(
-            nn.Conv2d(c1, c1 // 2, kernel_size=3, padding=1, bias=False),
-            nn.BatchNorm2d(c1 // 2),
-            nn.ReLU(inplace=True),
-            nn.Conv2d(c1 // 2, 2, kernel_size=1),
-        )
-
-        # Head 5: endpoint probability
-        self.endpoint_head = nn.Conv2d(c1, 1, kernel_size=1)
-
         # Deep supervision: auxiliary segmentation heads at decoder stages 4/3/2
         if use_deep_supervision:
             self.ds_seg_heads = nn.ModuleList([
@@ -95,9 +76,6 @@ class RAVIRNet(nn.Module):
         result: dict[str, torch.Tensor | list[torch.Tensor]] = {
             "segmentation": self.seg_head(features),
             "vessel_prob": self.vessel_prob_head(features),
-            "orientation": self.orientation_head(features),
-            "width": self.width_head(features),
-            "endpoint": self.endpoint_head(features),
         }
 
         if self.use_deep_supervision and self.training:
