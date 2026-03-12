@@ -96,9 +96,22 @@ class RAVIRNet(nn.Module):
         bottleneck = self.aspp(bottleneck)
         features, intermediates = self.decoder(skips, bottleneck)
 
+        seg_logits = self.seg_head(features)
+        vessel_logits = self.vessel_prob_head(features)
+
+        # Ensure outputs are at the same spatial resolution as the input
+        if seg_logits.shape[2:] != input_size:
+            seg_logits = F.interpolate(
+                seg_logits, size=input_size, mode="bilinear", align_corners=False,
+            )
+        if vessel_logits.shape[2:] != input_size:
+            vessel_logits = F.interpolate(
+                vessel_logits, size=input_size, mode="bilinear", align_corners=False,
+            )
+
         result: dict[str, torch.Tensor | list[torch.Tensor]] = {
-            "segmentation": self.seg_head(features),
-            "vessel_prob": self.vessel_prob_head(features),
+            "segmentation": seg_logits,
+            "vessel_prob": vessel_logits,
         }
 
         if self.use_deep_supervision and self.training:
