@@ -4,7 +4,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from .blocks import ResidualBlock, CBAMBlock
+from .blocks import ResidualBlock, AttentionGate
 
 
 class DecoderStage(nn.Module):
@@ -14,30 +14,41 @@ class DecoderStage(nn.Module):
             skip_channels: int,
             out_channels: int,
             dropout_rate: float = 0.0,
-            use_attention: bool = True,
     ):
         super().__init__()
-        self.up = nn.ConvTranspose2d(
-            in_channels, in_channels // 2,
-            kernel_size=2, stride=2, bias=False,
-        )
-        self.bn_up = nn.BatchNorm2d(in_channels // 2)
-        self.relu = nn.ReLU(inplace=True)
 
-        self.residual = ResidualBlock(
-            in_channels // 2 + skip_channels, out_channels, dropout_rate,
+        self.upsample = nn.ConvTranspose2d(
+            in_channels,
+            in_channels,
+            kernel_size=2,
+            stride=2,
         )
-        self.attention = CBAMBlock(out_channels) if use_attention else nn.Identity()
+        self.attention_gate = AttentionGate(
+            gate_channels=in_channels,
+            skip_channels=skip_channels,
+        )
+
+        self.conv_block = ResidualBlock(
+            in_channels + skip_channels,
+            out_channels,
+            dropout_rate,
+        )
 
     def forward(self, x: torch.Tensor, skip: torch.Tensor) -> torch.Tensor:
-        x = self.relu(self.bn_up(self.up(x)))
+        x = self.upsample(x)
 
         if x.shape[2:] != skip.shape[2:]:
-            x = F.interpolate(x, size=skip.shape[2:], mode="bilinear", align_corners=False)
+            x = F.interpolate(
+                x,
+                size=skip.shape[2:],
+                mode="bilinear",
+                align_corners=False,
+            )
 
-        x = torch.cat([skip, x], dim=1)
-        x = self.residual(x)
-        x = self.attention(x)
+        skip = self.attention_gate(gate=x, skip=skip)
+        x = torch.cat([x, skip], dim=1)
+        x = self.conv_block(x)
+
         return x
 
 
@@ -46,30 +57,71 @@ class FeatureDecoder(nn.Module):
             self,
             skip_channels: list[int],
             bottleneck_channels: int,
-            dropout_rate: float = 0.0,
-            use_attention: bool = True,
+            num_classes: int = 3,
+            use_deep_supervision: bool = True,
+            dropout_rate: float = 0.1,
     ):
         super().__init__()
-        assert len(skip_channels) == 4, f"Expected 4 skip channels, got {len(skip_channels)}"
 
-        s1, s2, s3, s4 = skip_channels
+        self.use_deep_supervision = use_deep_supervision
+        self.num_stages = len(skip_channels)
 
-        # Decoder stages (deepest → shallowest)
-        self.dec4 = DecoderStage(bottleneck_channels, s4, s4, dropout_rate, use_attention)
-        self.dec3 = DecoderStage(s4, s3, s3, dropout_rate, use_attention)
-        self.dec2 = DecoderStage(s3, s2, s2, dropout_rate, use_attention)
-        self.dec1 = DecoderStage(s2, s1, s1, dropout_rate, use_attention)
+        reversed_skips = list(reversed(skip_channels))
 
-        self.output_channels = s1
+        stages: list[DecoderStage] = []
+        in_ch = bottleneck_channels
+        for i, sk_ch in enumerate(reversed_skips):
+            out_ch = sk_ch
+            drop = dropout_rate if i < 2 else 0.0
+            stages.append(DecoderStage(in_ch, sk_ch, out_ch, drop))
+            in_ch = out_ch
+
+        self.stages = nn.ModuleList(stages)
+
+        self.final_conv = nn.Conv2d(reversed_skips[-1], num_classes, kernel_size=1)
+
+        if use_deep_supervision:
+            ds_heads: list[nn.Module] = []
+            for i in range(self.num_stages - 1):
+                ds_heads.append(
+                    nn.Conv2d(reversed_skips[i], num_classes, kernel_size=1)
+                )
+            self.ds_heads = nn.ModuleList(ds_heads)
 
     def forward(
-            self, skips: list[torch.Tensor], bottleneck: torch.Tensor,
-    ) -> torch.Tensor:
-        skip1, skip2, skip3, skip4 = skips
+            self,
+            skips: list[torch.Tensor],
+            bottleneck: torch.Tensor,
+    ) -> tuple[torch.Tensor, list[torch.Tensor]]:
+        reversed_skips = list(reversed(skips))
 
-        x = self.dec4(bottleneck, skip4)
-        x = self.dec3(x, skip3)
-        x = self.dec2(x, skip2)
-        x = self.dec1(x, skip1)
+        target_size = skips[0].shape[2:]
 
-        return x
+        x = bottleneck
+        ds_outputs: list[torch.Tensor] = []
+
+        for i, stage in enumerate(self.stages):
+            x = stage(x, reversed_skips[i])
+
+            if self.use_deep_supervision and i < self.num_stages - 1:
+                ds_logits = self.ds_heads[i](x)
+                if ds_logits.shape[2:] != target_size:
+                    ds_logits = F.interpolate(
+                        ds_logits,
+                        size=target_size,
+                        mode="bilinear",
+                        align_corners=False,
+                    )
+                ds_outputs.append(ds_logits)
+
+        seg_out = self.final_conv(x)
+
+        if seg_out.shape[2:] != target_size:
+            seg_out = F.interpolate(
+                seg_out,
+                size=target_size,
+                mode="bilinear",
+                align_corners=False,
+            )
+
+        return seg_out, ds_outputs
