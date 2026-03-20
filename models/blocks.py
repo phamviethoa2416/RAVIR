@@ -116,7 +116,7 @@ class AttentionGate(nn.Module):
         super().__init__()
 
         if inter_channels is None:
-            inter_channels = skip_channels // 2
+            inter_channels = max(skip_channels // 2, 8)
 
         self.W_gate = nn.Sequential(
             nn.Conv2d(gate_channels, inter_channels, kernel_size=1, bias=False),
