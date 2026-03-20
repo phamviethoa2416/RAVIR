@@ -31,7 +31,7 @@ class FeatureEncoder(nn.Module):
 
     @property
     def skip_channels(self) -> list[int]:
-        return self._out_channels[1:-1]
+        return self._out_channels[:-1]
 
     @property
     def bottleneck_channels(self) -> int:

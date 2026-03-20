@@ -10,7 +10,7 @@ from .encoder import FeatureEncoder
 class RAVIRNet(nn.Module):
     def __init__(
             self,
-            encoder_name: str = "resnet34",
+            encoder_name: str = "efficientnet-b4",
             in_channels: int = 3,
             num_classes: int = 3,
             encoder_weights: str | None = "imagenet",

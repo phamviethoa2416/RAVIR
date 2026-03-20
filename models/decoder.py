@@ -68,23 +68,27 @@ class FeatureDecoder(nn.Module):
 
         reversed_skips = list(reversed(skip_channels))
 
+        min_dec_ch = 32
+
         stages: list[DecoderStage] = []
+        stage_out_channels: list[int] = []
         in_ch = bottleneck_channels
         for i, sk_ch in enumerate(reversed_skips):
-            out_ch = sk_ch
+            out_ch = max(sk_ch, min_dec_ch)
             drop = dropout_rate if i < 2 else 0.0
             stages.append(DecoderStage(in_ch, sk_ch, out_ch, drop))
+            stage_out_channels.append(out_ch)
             in_ch = out_ch
 
         self.stages = nn.ModuleList(stages)
 
-        self.final_conv = nn.Conv2d(reversed_skips[-1], num_classes, kernel_size=1)
+        self.final_conv = nn.Conv2d(stage_out_channels[-1], num_classes, kernel_size=1)
 
         if use_deep_supervision:
             ds_heads: list[nn.Module] = []
             for i in range(self.num_stages - 1):
                 ds_heads.append(
-                    nn.Conv2d(reversed_skips[i], num_classes, kernel_size=1)
+                    nn.Conv2d(stage_out_channels[i], num_classes, kernel_size=1)
                 )
             self.ds_heads = nn.ModuleList(ds_heads)
 
