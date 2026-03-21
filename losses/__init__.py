@@ -1,17 +1,13 @@
 from .losses import (
     DiceLoss,
     CombinedLoss,
-    TverskyLoss,
-    TverskyCELoss,
-    VesselProbLoss,
-    MultiHeadLoss,
+    SoftSkeletonRecallLoss,
+    VesselSegmentationLoss,
 )
 
 __all__ = [
     "DiceLoss",
     "CombinedLoss",
-    "TverskyLoss",
-    "TverskyCELoss",
-    "VesselProbLoss",
-    "MultiHeadLoss",
+    "SoftSkeletonRecallLoss",
+    "VesselSegmentationLoss",
 ]

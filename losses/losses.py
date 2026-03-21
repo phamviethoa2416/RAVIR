@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -9,76 +11,39 @@ class DiceLoss(nn.Module):
         self.num_classes = num_classes
         self.smooth = smooth
 
-    def forward(self, inputs: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
-        probs = F.softmax(inputs, dim=1)
+    def forward(self, logits: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
+        probs = F.softmax(logits, dim=1)
         one_hot = (
-            F.one_hot(targets.long(), self.num_classes)
-            .permute(0, 3, 1, 2).float()
+            F.one_hot(targets.long(), self.num_classes).permute(0, 3, 1, 2).float()
         )
         intersection = (probs * one_hot).sum(dim=(2, 3))
-        cardinality = probs.sum(dim=(2, 3)) + one_hot.sum(dim=(2, 3))
-        dice = (2 * intersection + self.smooth) / (cardinality + self.smooth)
-        return (1.0 - dice[:, 1:]).mean()
-
-
-class TverskyLoss(nn.Module):
-    def __init__(
-        self,
-        num_classes: int = 3,
-        alpha: float = 0.3,
-        beta: float = 0.7,
-        smooth: float = 1e-5,
-    ):
-        super().__init__()
-        self.num_classes = num_classes
-        self.alpha = alpha
-        self.beta = beta
-        self.smooth = smooth
-
-    def forward(self, inputs: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
-        probs = F.softmax(inputs, dim=1)
-        one_hot = (
-            F.one_hot(targets.long(), self.num_classes)
-            .permute(0, 3, 1, 2).float()
-        )
-        tp = (probs * one_hot).sum(dim=(2, 3))
-        fp = (probs * (1 - one_hot)).sum(dim=(2, 3))
-        fn = ((1 - probs) * one_hot).sum(dim=(2, 3))
-        tversky = (tp + self.smooth) / (
-            tp + self.alpha * fp + self.beta * fn + self.smooth
-        )
-        return 1 - tversky[:, 1:].mean()
+        union = probs.sum(dim=(2, 3)) + one_hot.sum(dim=(2, 3))
+        dice = (2.0 * intersection + self.smooth) / (union + self.smooth)
+        return 1.0 - dice[:, 1:].mean()
 
 
 class CombinedLoss(nn.Module):
-    """CrossEntropy + Dice loss for semantic segmentation."""
-
     def __init__(
-        self,
-        num_classes: int = 3,
-        ce_weight: float = 1.0,
-        dice_weight: float = 1.0,
-        smooth: float = 1e-5,
-        label_smoothing: float = 0.1,
-        class_weights: torch.Tensor | None = None,
+            self,
+            num_classes: int = 3,
+            ce_weight: float = 1.0,
+            dice_weight: float = 1.0,
+            label_smoothing: float = 0.0,
+            class_weights: torch.Tensor | None = None,
     ):
         super().__init__()
         self.ce_weight = ce_weight
         self.dice_weight = dice_weight
-        self.label_smoothing = label_smoothing
-        self.dice_loss = DiceLoss(num_classes=num_classes, smooth=smooth)
+        self.dice_loss = DiceLoss(num_classes=num_classes)
 
         if class_weights is not None:
             self.register_buffer("class_weights", class_weights)
         else:
             self.class_weights = None
 
-        self._build_ce()
-
-    def _build_ce(self):
         self.ce_loss = nn.CrossEntropyLoss(
             weight=self.class_weights,
-            label_smoothing=self.label_smoothing,
+            label_smoothing=label_smoothing,
         )
 
     def forward(self, logits: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
@@ -87,87 +52,98 @@ class CombinedLoss(nn.Module):
         return self.ce_weight * ce + self.dice_weight * dice
 
 
-class TverskyCELoss(nn.Module):
-    """Tversky + CrossEntropy loss for semantic segmentation."""
-
+class SoftSkeletonRecallLoss(nn.Module):
     def __init__(
-        self,
-        num_classes: int = 3,
-        tversky_weight: float = 0.7,
-        ce_weight: float = 0.3,
-        tversky_alpha: float = 0.3,
-        tversky_beta: float = 0.7,
-        smooth: float = 1e-5,
-        label_smoothing: float = 0.1,
-        class_weights: torch.Tensor | None = None,
+            self,
+            num_classes: int = 3,
+            smooth: float = 1e-5,
     ):
         super().__init__()
-        self.tversky_weight = tversky_weight
-        self.ce_weight = ce_weight
-        self.label_smoothing = label_smoothing
-        self.tversky_loss = TverskyLoss(num_classes, tversky_alpha, tversky_beta, smooth)
+        self.num_classes = num_classes
+        self.smooth = smooth
 
-        if class_weights is not None:
-            self.register_buffer("class_weights", class_weights)
-        else:
-            self.class_weights = None
+    def forward(self, logits: torch.Tensor, skeleton: torch.Tensor) -> torch.Tensor:
+        probs = F.softmax(logits, dim=1)
 
-        self._build_ce()
+        with torch.no_grad():
+            skel_onehot = (
+                F.one_hot(skeleton.long(), self.num_classes).permute(0, 3, 1, 2).float()
+            )
 
-    def _build_ce(self):
-        self.ce_loss = nn.CrossEntropyLoss(
-            weight=self.class_weights,
-            label_smoothing=self.label_smoothing,
+            skel_foreground = skel_onehot[:, 1:]
+            sum_skel = skel_foreground.sum(dim=(2, 3))
+
+        probs_fg = probs[:, 1:]
+
+        intersection = (probs_fg * skel_foreground).sum(dim=(2, 3))
+
+        recall = (intersection + self.smooth) / torch.clip(
+            sum_skel + self.smooth,
+            min=1e-8,
         )
 
-    def forward(self, logits: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
-        ce = self.ce_loss(logits, targets.long())
-        tversky = self.tversky_loss(logits, targets)
-        return self.tversky_weight * tversky + self.ce_weight * ce
+        return 1 - recall.mean()
 
 
-# ── Auxiliary head loss ───────────────────────────────────────────────────────
-
-class VesselProbLoss(nn.Module):
-    def __init__(self, pos_weight_value: float = 3.0):
-        super().__init__()
-        self.register_buffer(
-            "pos_weight", torch.tensor([pos_weight_value]),
-        )
-
-    def forward(self, logits: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
-        return F.binary_cross_entropy_with_logits(
-            logits, targets, pos_weight=self.pos_weight,
-        )
-
-
-# ── Multi-head loss (seg + vessel_prob) ───────────────────────────────────────
-
-
-class MultiHeadLoss(nn.Module):
+class VesselSegmentationLoss(nn.Module):
     def __init__(
-        self,
-        seg_criterion: nn.Module,
-        vessel_prob_weight: float = 0.5,
-        vessel_prob_pos_weight: float = 3.0,
+            self,
+            num_classes: int = 3,
+            ce_weight: float = 1.0,
+            dice_weight: float = 1.0,
+            skeleton_weight: float = 1.0,
+            ds_weight: float = 0.4,
+            ds_decay: float = 0.8,
+            label_smoothing: float = 0.0,
+            class_weights: torch.Tensor | None = None,
     ):
         super().__init__()
-        self.seg_criterion = seg_criterion
-        self.vessel_prob_loss = VesselProbLoss(vessel_prob_pos_weight)
-        self.vessel_prob_weight = vessel_prob_weight
+
+        self.skeleton_weight = skeleton_weight
+        self.ds_weight = ds_weight
+        self.ds_decay = ds_decay
+
+        self.combined_loss = CombinedLoss(
+            num_classes=num_classes,
+            ce_weight=ce_weight,
+            dice_weight=dice_weight,
+            label_smoothing=label_smoothing,
+            class_weights=class_weights,
+        )
+
+        self.skeleton_loss = SoftSkeletonRecallLoss(num_classes=num_classes)
 
     def forward(
-        self,
-        outputs: dict[str, torch.Tensor],
-        targets: dict[str, torch.Tensor],
+            self,
+            outputs: dict[str, torch.Tensor | list[torch.Tensor]],
+            targets: torch.Tensor,
+            skeleton: torch.Tensor | None = None,
     ) -> tuple[torch.Tensor, dict[str, float]]:
-        seg = self.seg_criterion(outputs["segmentation"], targets["mask"])
-        vp = self.vessel_prob_loss(outputs["vessel_prob"], targets["vessel_prob"])
+        seg_logits = outputs["seg"]
+        ds_logits_list: list[torch.Tensor] = outputs.get("ds", [])
 
-        total = seg + self.vessel_prob_weight * vp
+        loss_seg = self.combined_loss(seg_logits, targets)
+        total = loss_seg
 
-        details = {
-            "seg_loss": seg.item(),
-            "vessel_prob_loss": vp.item(),
+        details: dict[str, float] = {
+            "seg": loss_seg.item(),
         }
+
+        if skeleton is not None and self.skeleton_weight > 0:
+            loss_skel = self.skeleton_loss(seg_logits, skeleton)
+            total = total + self.skeleton_weight * loss_skel
+            details["skel"] = loss_skel.item()
+
+        if ds_logits_list:
+            ds_total = torch.tensor(0.0, device=seg_logits.device)
+
+            for i, ds_logits in enumerate(ds_logits_list):
+                w = self.ds_weight * (self.ds_decay ** i)
+                ds_loss_i = self.combined_loss(ds_logits, targets)
+                ds_total = ds_total + w * ds_loss_i
+
+            total = total + ds_total
+            details["ds"] = ds_total.item()
+
+        details["total"] = total.item()
         return total, details
