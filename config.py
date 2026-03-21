@@ -105,6 +105,7 @@ def _detect_gpu_profile() -> dict:
         "allow_tf32": False,
     }
 
+
 _GPU = _detect_gpu_profile()
 
 
@@ -115,26 +116,27 @@ class Config:
     TRAIN_MASK_DIR = os.path.join(DATA_DIR, "train", "training_masks")
     TEST_IMG_DIR = os.path.join(DATA_DIR, "test")
     OUTPUT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "outputs")
+    SKELETON_CACHE_DIR = os.path.join(DATA_DIR, "train", "skeleton_cache")
 
     # ── Dataset ────────────────────────────────────────────────────────────────
     NUM_CLASSES = 3
     CLASS_NAMES = ["background", "artery", "vein"]
-    IMG_SIZE = _GPU["img_size"]             # auto-scaled to GPU VRAM
-    ORIGINAL_SIZE = 768                     # RAVIR native image size
-    IN_CHANNELS = 1
+    IMG_SIZE = _GPU["img_size"]
+    ORIGINAL_SIZE = 768
+    IN_CHANNELS = 3
 
     MASK_PIXEL_VALUES = {
-        0: 0,                               # background
-        128: 1,                             # artery
-        255: 2,                             # vein
+        0: 0,  # background
+        128: 1,  # artery
+        255: 2,  # vein
     }
-    CLASS_TO_PIXEL = {0: 0, 1: 128, 2: 256}
+    CLASS_TO_PIXEL = {0: 0, 1: 128, 2: 255}
 
     # ── Model Architecture ─────────────────────────────────────────────────────
-    ENCODER_NAME = "resnet34"               # SMP encoder backbone
-    ENCODER_WEIGHTS = "imagenet"            # pretrained weights (None to train from scratch)
-    DROPOUT_RATE = 0.1                      # dropout probability
-    USE_ATTENTION = True                    # enable CBAM attention in decoder
+    ENCODER_NAME = "efficientnet-b4"
+    ENCODER_WEIGHTS = "imagenet"
+    DROPOUT_RATE = 0.1
+    USE_DEEP_SUPERVISION = True
 
     # ── Training (auto-scaled) ─────────────────────────────────────────────────
     BATCH_SIZE = _GPU["batch_size"]
@@ -162,15 +164,13 @@ class Config:
     # ── Segmentation Loss ──────────────────────────────────────────────────────
     DICE_WEIGHT = 1.0
     CE_WEIGHT = 1.0
-    TVERSKY_WEIGHT = 0.7
-    TVERSKY_CE_WEIGHT = 0.3
-    TVERSKY_ALPHA = 0.3
-    TVERSKY_BETA = 0.7
-    LABEL_SMOOTHING = 0.1
+    SKELETON_WEIGHT = 1.5
+    LABEL_SMOOTHING = 0.05
+    DS_WEIGHT = 0.4
+    DS_DECAY = 0.8
 
-    # ── Auxiliary Loss ─────────────────────────────────────────────────────────
-    VESSEL_PROB_LOSS_WEIGHT = 0.5
-    VESSEL_PROB_POS_WEIGHT = 3.0
+    # ── Skeleton ──────────────────────────────────────────────────────
+    TUBE_RADIUS = 1
 
     # ── Class Imbalance ────────────────────────────────────────────────────────
     USE_DYNAMIC_WEIGHTS = False
@@ -196,14 +196,17 @@ class Config:
         lines = [
             f"  GPU            : {cls.GPU_NAME}",
             f"  VRAM           : {cls.VRAM_GB:.1f} GB",
+            f"  Encoder        : {cls.ENCODER_NAME} (weights={cls.ENCODER_WEIGHTS})",
             f"  IMG_SIZE       : {cls.IMG_SIZE}×{cls.IMG_SIZE}"
             + (" (full-size)" if cls.IMG_SIZE == 768 else f" (patch, sliding window for {cls.ORIGINAL_SIZE})"),
             f"  Batch Size     : {cls.BATCH_SIZE} × {cls.GRAD_ACCUMULATION_STEPS} accum = {eff_batch} effective",
             f"  AMP            : {cls.AMP_DTYPE}" + (" (disabled)" if not cls.USE_AMP else ""),
             f"  TF32           : {'yes' if cls.ALLOW_TF32 else 'no'}",
+            f"  Loss           : CE({cls.CE_WEIGHT}) + Dice({cls.DICE_WEIGHT}) + SkelRecall({cls.SKELETON_WEIGHT})",
+            f"  Deep Supervision: {'yes' if cls.USE_DEEP_SUPERVISION else 'no'}"
+            + (f" (w={cls.DS_WEIGHT}, decay={cls.DS_DECAY})" if cls.USE_DEEP_SUPERVISION else ""),
             f"  Sliding Window : {'yes (train on patches)' if needs_sw else 'no (direct forward)'}",
             f"  Workers        : {cls.NUM_WORKERS}",
-            "=" * 60,
         ]
         return "\n".join(lines)
 
