@@ -24,12 +24,12 @@ class DiceLoss(nn.Module):
 
 class CombinedLoss(nn.Module):
     def __init__(
-            self,
-            num_classes: int = 3,
-            ce_weight: float = 1.0,
-            dice_weight: float = 1.0,
-            label_smoothing: float = 0.0,
-            class_weights: torch.Tensor | None = None,
+        self,
+        num_classes: int = 3,
+        ce_weight: float = 1.0,
+        dice_weight: float = 1.0,
+        label_smoothing: float = 0.0,
+        class_weights: torch.Tensor | None = None,
     ):
         super().__init__()
         self.ce_weight = ce_weight
@@ -54,9 +54,9 @@ class CombinedLoss(nn.Module):
 
 class SoftSkeletonRecallLoss(nn.Module):
     def __init__(
-            self,
-            num_classes: int = 3,
-            smooth: float = 1e-5,
+        self,
+        num_classes: int = 3,
+        smooth: float = 1.0,
     ):
         super().__init__()
         self.num_classes = num_classes
@@ -87,15 +87,15 @@ class SoftSkeletonRecallLoss(nn.Module):
 
 class VesselSegmentationLoss(nn.Module):
     def __init__(
-            self,
-            num_classes: int = 3,
-            ce_weight: float = 1.0,
-            dice_weight: float = 1.0,
-            skeleton_weight: float = 1.0,
-            ds_weight: float = 0.4,
-            ds_decay: float = 0.8,
-            label_smoothing: float = 0.0,
-            class_weights: torch.Tensor | None = None,
+        self,
+        num_classes: int = 3,
+        ce_weight: float = 1.0,
+        dice_weight: float = 1.0,
+        skeleton_weight: float = 1.5,
+        ds_weight: float = 0.4,
+        ds_decay: float = 0.8,
+        label_smoothing: float = 0.0,
+        class_weights: torch.Tensor | None = None,
     ):
         super().__init__()
 
@@ -114,10 +114,10 @@ class VesselSegmentationLoss(nn.Module):
         self.skeleton_loss = SoftSkeletonRecallLoss(num_classes=num_classes)
 
     def forward(
-            self,
-            outputs: dict[str, torch.Tensor | list[torch.Tensor]],
-            targets: torch.Tensor,
-            skeleton: torch.Tensor | None = None,
+        self,
+        outputs: dict[str, torch.Tensor | list[torch.Tensor]],
+        targets: torch.Tensor,
+        skeleton: torch.Tensor | None = None,
     ) -> tuple[torch.Tensor, dict[str, float]]:
         seg_logits = outputs["seg"]
         ds_logits_list: list[torch.Tensor] = outputs.get("ds", [])
@@ -138,7 +138,7 @@ class VesselSegmentationLoss(nn.Module):
             ds_total = torch.tensor(0.0, device=seg_logits.device)
 
             for i, ds_logits in enumerate(ds_logits_list):
-                w = self.ds_weight * (self.ds_decay ** i)
+                w = self.ds_weight * (self.ds_decay**i)
                 ds_loss_i = self.combined_loss(ds_logits, targets)
                 ds_total = ds_total + w * ds_loss_i
 
