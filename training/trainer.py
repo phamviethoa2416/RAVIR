@@ -25,7 +25,9 @@ def create_scaler() -> GradScaler | None:
 def needs_sliding_window() -> bool:
     return Config.IMG_SIZE < Config.ORIGINAL_SIZE
 
+
 # ── Training ──────────────────────────────────────────────────────────────────
+
 
 def train_one_epoch(
         model: nn.Module,
@@ -49,13 +51,11 @@ def train_one_epoch(
     for step, batch in enumerate(pbar):
         images = batch["image"].to(device, non_blocking=True)
         masks = batch["mask"].to(device, non_blocking=True)
-        vessel_prob = batch["vessel_prob"].to(device, non_blocking=True)
-
-        targets = {"mask": masks, "vessel_prob": vessel_prob}
+        skeleton = batch["skeleton"].to(device, non_blocking=True)
 
         with autocast(device_type="cuda", dtype=amp_dtype, enabled=use_amp):
             outputs = model(images)
-            loss, details = criterion(outputs, targets)
+            loss, details = criterion(outputs, masks, skeleton)
 
         scaled_loss = loss / grad_accum_steps
 
@@ -85,13 +85,14 @@ def train_one_epoch(
     avg_details = {k: v / max(num_batches, 1) for k, v in running_details.items()}
     return avg_loss, avg_details
 
+
 def sliding_window_inference(
         model: nn.Module,
         image: torch.Tensor,
         tile_size: int = 512,
         overlap: int = 128,
         num_classes: int = 3,
-) -> dict[str, torch.Tensor]:
+) -> torch.Tensor:
     amp_dtype = get_amp_dtype()
     use_amp = Config.USE_AMP and image.is_cuda
 
@@ -105,7 +106,6 @@ def sliding_window_inference(
     _, _, Hp, Wp = image.shape
 
     acc_seg = torch.zeros(1, num_classes, Hp, Wp, device=image.device)
-    acc_vp = torch.zeros(1, 1, Hp, Wp, device=image.device)
     wsum = torch.zeros(1, 1, Hp, Wp, device=image.device)
 
     ramp = torch.hann_window(tile_size, periodic=False, device=image.device)
@@ -120,18 +120,16 @@ def sliding_window_inference(
 
     for y in ys:
         for x in xs:
-            tile = image[:, :, y:y + tile_size, x:x + tile_size]
+            tile = image[:, :, y: y + tile_size, x: x + tile_size]
             with autocast(device_type="cuda", dtype=amp_dtype, enabled=use_amp):
                 out = model(tile)
-            acc_seg[:, :, y:y + tile_size, x:x + tile_size] += out["segmentation"].float() * win
-            acc_vp[:, :, y:y + tile_size, x:x + tile_size] += out["vessel_prob"].float() * win
-            wsum[:, :, y:y + tile_size, x:x + tile_size] += win
+            acc_seg[:, :, y: y + tile_size, x: x + tile_size] += (
+                    out["seg"].float() * win
+            )
+            wsum[:, :, y: y + tile_size, x: x + tile_size] += win
 
     wc = wsum.clamp(min=1e-6)
-    return {
-        "segmentation": (acc_seg / wc)[:, :, :H, :W],
-        "vessel_prob": (acc_vp / wc)[:, :, :H, :W],
-    }
+    return (acc_seg / wc)[:, :, :H, :W]
 
 
 # ── Validation ────────────────────────────────────────────────────────────────
@@ -159,36 +157,35 @@ def validate(
     for batch in pbar:
         images = batch["image"].to(device, non_blocking=True)
         masks = batch["mask"].to(device, non_blocking=True)
-        vessel_prob = batch["vessel_prob"].to(device, non_blocking=True)
+        skeleton = batch["skeleton"].to(device, non_blocking=True)
 
-        targets = {"mask": masks, "vessel_prob": vessel_prob}
-
+        # ── Forward ───────────────────────────────────────────────────
         if use_sw:
             B = images.shape[0]
-            merged: dict[str, list] = {}
+            seg_list: list[torch.Tensor] = []
             for b in range(B):
-                tile_out = sliding_window_inference(
-                    model, images[b:b + 1],
+                seg_logits = sliding_window_inference(
+                    model,
+                    images[b: b + 1],
                     tile_size=Config.IMG_SIZE,
                     overlap=Config.IMG_SIZE // 4,
                     num_classes=Config.NUM_CLASSES,
                 )
-                for k, v in tile_out.items():
-                    merged.setdefault(k, []).append(v)
-            outputs = {k: torch.cat(v, dim=0) for k, v in merged.items()}
+                seg_list.append(seg_logits)
+            seg_merged = torch.cat(seg_list, dim=0)
+            outputs = {"seg": seg_merged, "ds": []}
         else:
             with autocast(device_type="cuda", dtype=amp_dtype, enabled=use_amp):
                 outputs = model(images)
 
-        with autocast(device_type="cuda", dtype=amp_dtype, enabled=use_amp):
-            loss, details = criterion(outputs, targets)
+        loss, details = criterion(outputs, masks, skeleton)
 
         running_loss += loss.item()
         for k, v in details.items():
             running_details[k] = running_details.get(k, 0.0) + v
         num_batches += 1
 
-        preds = torch.argmax(outputs["segmentation"], dim=1)
+        preds = outputs["seg"].argmax(dim=1)
         metrics_calculator.update(preds, masks)
         pbar.set_postfix({"loss": f"{running_loss / num_batches:.4f}"})
 
