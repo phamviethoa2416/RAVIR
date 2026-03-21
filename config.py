@@ -19,7 +19,6 @@ def _detect_gpu_profile() -> dict:
             "allow_tf32": False,
         }
 
-    torch.cuda.get_device_name(0).lower()
     vram = torch.cuda.get_device_properties(0).total_memory / (1024 ** 3)
     cap_major, _ = torch.cuda.get_device_capability(0)
 

@@ -31,9 +31,6 @@ class VesselAwareCrop(alb.DualTransform):
         self.vessel_bias = vessel_bias
         self.vessel_labels = vessel_labels
 
-        self._crop_y = 0
-        self._crop_x = 0
-
     def get_params_dependent_on_data(
             self,
             params: dict[str, Any],
@@ -191,23 +188,20 @@ def get_train_transform() -> alb.Compose:
         ]
     )
 
-    return alb.Compose(transforms)
+    return alb.Compose(
+        transforms,
+        additional_targets={"skeleton": "mask"},
+    )
 
 
 def get_val_transform() -> alb.Compose:
-    transforms: list[alb.BasicTransform] = []
-
-    if Config.IMG_SIZE < Config.ORIGINAL_SIZE:
-        transforms.append(alb.CenterCrop(Config.IMG_SIZE, Config.IMG_SIZE))
-
-    transforms.extend(
+    return alb.Compose(
         [
             alb.Normalize(mean=_NORM_MEAN, std=_NORM_STD, max_pixel_value=_MAX_PIXEL),
             ToTensorV2(),
-        ]
+        ],
+        additional_targets={"skeleton": "mask"},
     )
-
-    return alb.Compose(transforms)
 
 
 def get_test_transform() -> alb.Compose:
@@ -215,5 +209,6 @@ def get_test_transform() -> alb.Compose:
         [
             alb.Normalize(mean=_NORM_MEAN, std=_NORM_STD, max_pixel_value=_MAX_PIXEL),
             ToTensorV2(),
-        ]
+        ],
+        additional_targets={"skeleton": "mask"},
     )

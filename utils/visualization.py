@@ -23,8 +23,14 @@ def _class_mask_to_rgb(mask: np.ndarray) -> np.ndarray:
     return rgb
 
 
+_IMAGENET_MEAN = np.array([0.485, 0.456, 0.406], dtype=np.float32)
+_IMAGENET_STD = np.array([0.229, 0.224, 0.225], dtype=np.float32)
+
+
 def _denormalize(img_tensor: torch.Tensor) -> np.ndarray:
-    return img_tensor.cpu().numpy() * 0.5 + 0.5
+    img = img_tensor.cpu().numpy()
+    img = img * _IMAGENET_STD[:, None, None] + _IMAGENET_MEAN[:, None, None]
+    return np.clip(img, 0.0, 1.0)
 
 
 @torch.no_grad()
