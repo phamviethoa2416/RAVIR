@@ -1,6 +1,6 @@
+import logging
 import os
 import random
-import logging
 
 import numpy as np
 import torch
@@ -11,6 +11,7 @@ def seed_everything(seed: int = 42, deterministic: bool = True):
     np.random.seed(seed)
     torch.manual_seed(seed)
     torch.cuda.manual_seed_all(seed)
+    torch.use_deterministic_algorithms(deterministic)
     torch.backends.cudnn.deterministic = deterministic
     torch.backends.cudnn.benchmark = not deterministic
 

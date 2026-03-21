@@ -1,8 +1,8 @@
 import os
 
+import matplotlib
 import numpy as np
 import torch
-import matplotlib
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
@@ -10,9 +10,9 @@ import matplotlib.pyplot as plt
 from config import Config
 
 COLOR_MAP = {
-    0: [0, 0, 0],       # background
-    1: [255, 0, 0],      # artery
-    2: [0, 0, 255],      # vein
+    0: [0, 0, 0],  # background
+    1: [255, 0, 0],  # artery
+    2: [0, 0, 255],  # vein
 }
 
 
@@ -56,13 +56,13 @@ def visualize_predictions(
 
         with autocast(device_type="cuda", dtype=amp_dtype, enabled=use_amp):
             outputs = model(images)
-        preds = torch.argmax(outputs["segmentation"], dim=1).cpu()
+        preds = torch.argmax(outputs["seg"], dim=1).cpu()
 
         for i in range(images.size(0)):
             if saved >= num_samples:
                 break
 
-            img_np = _denormalize(images[i, 0])
+            img_np = _denormalize(images[i]).transpose(1, 2, 0)
             gt_np = masks[i].numpy()
             pred_np = preds[i].numpy()
 
@@ -83,7 +83,9 @@ def visualize_predictions(
             plt.suptitle(f"Epoch {epoch} | {filenames[i]}", fontsize=14)
             plt.tight_layout()
             plt.savefig(
-                os.path.join(output_dir, f"epoch{epoch:03d}_{saved:02d}_{filenames[i]}"),
+                os.path.join(
+                    output_dir, f"epoch{epoch:03d}_{saved:02d}_{filenames[i]}"
+                ),
                 dpi=100,
                 bbox_inches="tight",
             )
