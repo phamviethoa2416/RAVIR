@@ -160,25 +160,25 @@ def validate(
         skeleton = batch["skeleton"].to(device, non_blocking=True)
 
         # ── Forward ───────────────────────────────────────────────────
-        if use_sw:
-            B = images.shape[0]
-            seg_list: list[torch.Tensor] = []
-            for b in range(B):
-                seg_logits = sliding_window_inference(
-                    model,
-                    images[b: b + 1],
-                    tile_size=Config.IMG_SIZE,
-                    overlap=Config.IMG_SIZE // 4,
-                    num_classes=Config.NUM_CLASSES,
-                )
-                seg_list.append(seg_logits)
-            seg_merged = torch.cat(seg_list, dim=0)
-            outputs = {"seg": seg_merged, "ds": []}
-        else:
-            with autocast(device_type="cuda", dtype=amp_dtype, enabled=use_amp):
+        with autocast(device_type="cuda", dtype=amp_dtype, enabled=use_amp):
+            if use_sw:
+                B = images.shape[0]
+                seg_list: list[torch.Tensor] = []
+                for b in range(B):
+                    seg_logits = sliding_window_inference(
+                        model,
+                        images[b: b + 1],
+                        tile_size=Config.IMG_SIZE,
+                        overlap=Config.IMG_SIZE // 4,
+                        num_classes=Config.NUM_CLASSES,
+                    )
+                    seg_list.append(seg_logits)
+                seg_merged = torch.cat(seg_list, dim=0)
+                outputs = {"seg": seg_merged, "ds": []}
+            else:
                 outputs = model(images)
 
-        loss, details = criterion(outputs, masks, skeleton)
+            loss, details = criterion(outputs, masks, skeleton)
 
         running_loss += loss.item()
         for k, v in details.items():
