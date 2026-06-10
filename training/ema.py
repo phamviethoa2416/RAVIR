@@ -7,6 +7,8 @@ from typing import Iterator
 import torch
 import torch.nn as nn
 
+from .helpers import unwrap_model
+
 
 class EMAWeights:
     def __init__(
@@ -21,7 +23,7 @@ class EMAWeights:
         self.warmup = max(0, int(warmup))
         self.step = 0
 
-        self.module: nn.Module = deepcopy(model)
+        self.module: nn.Module = deepcopy(unwrap_model(model))
         if device is not None:
             self.module.to(device)
 
@@ -38,7 +40,7 @@ class EMAWeights:
     @torch.no_grad()
     def update(self, model: nn.Module) -> None:
         decay = self.current_decay
-        msd = model.state_dict()
+        msd = unwrap_model(model).state_dict()
         esd = self.module.state_dict()
         for k, v in msd.items():
             v_ema = esd[k]
@@ -50,12 +52,13 @@ class EMAWeights:
 
     @contextmanager
     def swap(self, model: nn.Module) -> Iterator[None]:
-        backup = {k: v.detach().clone() for k, v in model.state_dict().items()}
-        model.load_state_dict(self.module.state_dict(), strict=True)
+        unwrapped = unwrap_model(model)
+        backup = {k: v.detach().clone() for k, v in unwrapped.state_dict().items()}
+        unwrapped.load_state_dict(self.module.state_dict(), strict=True)
         try:
             yield model
         finally:
-            model.load_state_dict(backup, strict=True)
+            unwrapped.load_state_dict(backup, strict=True)
 
     def state_dict(self) -> dict:
         return {

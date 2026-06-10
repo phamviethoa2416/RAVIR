@@ -12,6 +12,7 @@ from tqdm import tqdm
 from config import Config
 from metrics import SegmentationMetrics
 from .ema import EMAWeights
+from .helpers import unwrap_model
 
 
 def get_amp_dtype() -> torch.dtype:
@@ -30,10 +31,6 @@ def create_scaler() -> GradScaler | None:
 
 def needs_sw() -> bool:
     return Config.IMG_SIZE < Config.ORIGINAL_SIZE
-
-
-def unwrap_model(model: nn.Module) -> nn.Module:
-    return getattr(model, "_orig_mod", model)
 
 
 def sw_inference(
