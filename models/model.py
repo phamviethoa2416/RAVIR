@@ -9,7 +9,7 @@ from .encoder import Encoder
 from .refinement import RecursiveRefinement
 
 
-class Model(nn.Module):
+class RAVIRNet(nn.Module):
     def __init__(
         self,
         encoder_name: str = "resnet34",
