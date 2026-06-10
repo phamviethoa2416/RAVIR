@@ -156,7 +156,7 @@ def get_train_transform(intensity: str = "full") -> A.Compose:
         build_full_transforms() if intensity == "full" else build_light_transforms()
     )
 
-    transforms = augmentation + [CLAHE] + FINALIZE
+    transforms = [CLAHE] + augmentation + FINALIZE
     return A.Compose(transforms, additional_targets=ADDITIONAL_TARGETS)
 
 
