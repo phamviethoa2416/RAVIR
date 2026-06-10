@@ -5,6 +5,8 @@ import torch.nn as nn
 from torch.amp import GradScaler
 from torch.optim import AdamW
 
+from training import EMAWeights
+
 
 def unwrap_model(model: nn.Module) -> nn.Module:
     return getattr(model, "_orig_mod", model)
