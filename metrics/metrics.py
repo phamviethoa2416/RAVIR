@@ -93,11 +93,11 @@ class SegmentationMetrics:
             precision_list.append(precision)
 
             name = self.class_names[c]
-            metrics[f"{name}_Dice"] = float(dice)
-            metrics[f"{name}_IoU"] = float(iou)
-            metrics[f"{name}_Sensitivity"] = float(sens)
-            metrics[f"{name}_Specificity"] = float(spec)
-            metrics[f"{name}_Precision"] = float(precision)
+            metrics[f"{name}_dice"] = float(dice)
+            metrics[f"{name}_iou"] = float(iou)
+            metrics[f"{name}_sensitivity"] = float(sens)
+            metrics[f"{name}_specificity"] = float(spec)
+            metrics[f"{name}_precision"] = float(precision)
 
         metrics["Mean_Vessel_Dice"] = float(np.mean(dice_list[1:]))
         metrics["Mean_Vessel_IoU"] = float(np.mean(iou_list[1:]))
@@ -127,11 +127,11 @@ class SegmentationMetrics:
             name = self.class_names[c]
             lines.append(f"  {name}:")
             lines.append(
-                f"    Dice={m[f'{name}_Dice']:.4f}  "
-                f"IoU={m[f'{name}_IoU']:.4f}  "
-                f"Sens={m[f'{name}_Sensitivity']:.4f}  "
-                f"Spec={m[f'{name}_Specificity']:.4f}  "
-                f"Precision={m[f'{name}_Precision']:.4f}"
+                f"    Dice={m[f'{name}_dice']:.4f}  "
+                f"IoU={m[f'{name}_iou']:.4f}  "
+                f"Sens={m[f'{name}_sensitivity']:.4f}  "
+                f"Spec={m[f'{name}_specificity']:.4f}  "
+                f"Precision={m[f'{name}_precision']:.4f}"
             )
 
         lines.append("  ──────────────────────────")
