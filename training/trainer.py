@@ -32,13 +32,17 @@ def needs_sw() -> bool:
     return Config.IMG_SIZE < Config.ORIGINAL_SIZE
 
 
+def unwrap_model(model: nn.Module) -> nn.Module:
+    return getattr(model, "_orig_mod", model)
+
+
 def sw_inference(
     model: nn.Module,
     image: torch.Tensor,
     tile_size: int = 512,
     overlap: int = 128,
     num_classes: int = 3,
-) -> torch.Tensor:
+) -> tuple[torch.Tensor, list[torch.Tensor]]:
     amp_dtype = get_amp_dtype()
     use_amp = Config.USE_AMP and image.is_cuda
     autocast_device = "cuda" if image.is_cuda else "cpu"
@@ -81,10 +85,11 @@ def sw_inference(
     wc = wsum.clamp(min=1e-6)
     assembled = (acc_seg / wc)[:, :, :H, :W]
 
+    core = unwrap_model(model)
     with torch.no_grad():
         with autocast(device_type=autocast_device, dtype=amp_dtype, enabled=use_amp):
-            refinement = model.refinement(assembled)
-    return refinement[-1].float()
+            refinement = core.refinement(assembled)
+    return assembled.float(), [r.float() for r in refinement]
 
 
 def train_one_epoch(
@@ -178,23 +183,29 @@ def validate(
         with autocast(device_type=autocast_device, dtype=amp_dtype, enabled=use_amp):
             if use_sw:
                 B = images.shape[0]
-                seg_list: list[torch.Tensor] = []
+                base_list: list[torch.Tensor] = []
+                refinement_list: list[list[torch.Tensor]] = []
                 for b in range(B):
-                    seg_logits = sw_inference(
+                    base_logits, refinement = sw_inference(
                         model=model,
                         image=images[b : b + 1],
                         tile_size=Config.IMG_SIZE,
                         overlap=Config.IMG_SIZE // 4,
                         num_classes=Config.NUM_CLASSES,
                     )
-                    seg_list.append(seg_logits)
-                segmentation = torch.cat(seg_list, dim=0)
+                    base_list.append(base_logits)
+                    refinement_list.append(refinement)
 
                 outputs = {
-                    "segmentation": segmentation,
+                    "segmentation": torch.cat(base_list, dim=0),
                     "ds": [],
-                    "vessel": None,
-                    "refinement": None,
+                    "refinement": [
+                        torch.cat(
+                            [refinement_list[b][k] for b in range(B)],
+                            dim=0,
+                        )
+                        for k in range(len(refinement_list[0]))
+                    ],
                 }
             else:
                 outputs = model(images)
