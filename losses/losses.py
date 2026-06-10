@@ -16,7 +16,6 @@ class SegmentationLoss(nn.Module):
         skeleton_weight: float = 1.0,
         ds_weight: float = 0.4,
         ds_decay: float = 0.8,
-        label_smoothing: float = 0.0,
         class_weights: torch.Tensor | None = None,
         cldice_num_iterations: int = 10,
         refinement_mode: str = "uniform",
@@ -31,7 +30,6 @@ class SegmentationLoss(nn.Module):
         self.skeleton_weight = skeleton_weight
         self.ds_weight = ds_weight
         self.ds_decay = ds_decay
-        self.label_smoothing = label_smoothing
 
         if refinement_mode not in ("uniform", "linear", "last_only"):
             raise ValueError(
@@ -50,7 +48,6 @@ class SegmentationLoss(nn.Module):
 
         self.ce_loss = nn.CrossEntropyLoss(
             weight=self.class_weights,
-            label_smoothing=self.label_smoothing,
         )
         self.dice_loss = DiceLoss(num_classes=num_classes)
 
