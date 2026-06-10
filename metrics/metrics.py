@@ -136,7 +136,7 @@ class SegmentationMetrics:
 
         lines.append("  ──────────────────────────")
         lines.append(
-            f"  Mean Vessel Dice: {m['Mean Vessel Dice']:.4f}  "
-            f"IoU: {m['Mean Vessel IoU']:.4f}"
+            f"  Mean Vessel Dice: {m['Mean_Vessel_Dice']:.4f}  "
+            f"IoU: {m['Mean_Vessel_IoU']:.4f}"
         )
         return "\n".join(lines)
