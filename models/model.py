@@ -38,8 +38,6 @@ class Model(nn.Module):
             dropout=dropout,
         )
 
-        decoder_final_channel = self.decoder.final_conv.in_channels
-        self.vessel_head = nn.Conv2d(decoder_final_channel, 1, kernel_size=1)
         self.refinement = RecursiveRefinement(
             num_iterations=refinement_iterations,
             base_channels=refinement_base_channels,
@@ -52,9 +50,7 @@ class Model(nn.Module):
 
         skips, bottleneck = self.encoder(x)
 
-        segmentation, ds, decoder_output = self.decoder(skips, bottleneck)
-
-        vessel = self.vessel_head(decoder_output)
+        segmentation, ds = self.decoder(skips, bottleneck)
 
         if segmentation.shape[2:] != input_size:
             segmentation = F.interpolate(
@@ -63,18 +59,10 @@ class Model(nn.Module):
                 mode="bilinear",
                 align_corners=False,
             )
-        if vessel.shape[2:] != input_size:
-            vessel = F.interpolate(
-                vessel,
-                size=input_size,
-                mode="bilinear",
-                align_corners=False,
-            )
 
         outputs: dict[str, torch.Tensor | list[torch.Tensor]] = {
             "segmentation": segmentation,
             "ds": ds,
-            "vessel": vessel,
             "refinement": self.refinement(segmentation),
         }
 

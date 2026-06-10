@@ -103,7 +103,7 @@ class Decoder(nn.Module):
         self,
         skips: list[torch.Tensor],
         bottleneck: torch.Tensor,
-    ) -> tuple[torch.Tensor, list[torch.Tensor], torch.Tensor]:
+    ) -> tuple[torch.Tensor, list[torch.Tensor]]:
         reversed_skips = list(reversed(skips))
 
         target_size = skips[0].shape[2:]
@@ -137,4 +137,4 @@ class Decoder(nn.Module):
                 align_corners=False,
             )
 
-        return segmentation, ds_outputs[::-1], x
+        return segmentation, ds_outputs[::-1]
