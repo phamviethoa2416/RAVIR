@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import gc
 import os
 import time
 from datetime import datetime
@@ -475,6 +476,7 @@ def train(args):
 
         logger.info("\nFinal metrics (best checkpoint):")
         logger.info(metrics_calc.summary())
+        del ckpt
 
     try:
         if ema is not None:
@@ -501,4 +503,19 @@ def train(args):
 
     logger.info(f"\nCheckpoint : {best_path}")
     logger.info(f"Run directory: {run_dir}")
-    return best_dice
+
+    del model, criterion, optimizer, scheduler, writer
+    del train_loader, val_loader, train_dataset, val_dataset
+    del metrics_calc, class_weights, history
+    if ema is not None:
+        del ema
+    if scaler is not None:
+        del scaler
+    if resume_checkpoint is not None:
+        del resume_checkpoint
+
+    gc.collect()
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+
+    return best_dice, run_dir
