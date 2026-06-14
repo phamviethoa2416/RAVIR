@@ -2,6 +2,33 @@ from __future__ import annotations
 
 import numpy as np
 import torch
+from skimage.morphology import skeletonize
+
+
+def cl_score(pred: np.ndarray, target: np.ndarray) -> float:
+    skel = skeletonize(target.astype(bool))
+    if skel.sum() == 0:
+        return 1.0
+    return float((skel & pred.astype(bool)).sum() / skel.sum())
+
+
+def compute_cldice_score(pred: np.ndarray, target: np.ndarray) -> float:
+    pred = pred.astype(bool)
+    target = target.astype(bool)
+
+    if pred.sum() == 0 and target.sum() == 0:
+        return 1.0
+
+    if pred.sum() == 0 or target.sum() == 0:
+        return 0.0
+
+    t_prec = cl_score(target, pred)
+    t_sens = cl_score(pred, target)
+
+    if t_prec + t_sens == 0:
+        return 0.0
+
+    return float(2.0 * t_prec * t_sens / (t_prec + t_sens))
 
 
 class SegmentationMetrics:
@@ -9,6 +36,7 @@ class SegmentationMetrics:
         self,
         num_classes: int = 3,
         class_names: list[str] | None = None,
+        evaluate_cldice: bool = True,
     ):
         self.num_classes = num_classes
         self.class_names = class_names or [
@@ -17,13 +45,30 @@ class SegmentationMetrics:
             "vein",
         ]
 
-        self.confusion_matrix = np.zeros((num_classes, num_classes), dtype=np.int64)
+        if len(self.class_names) != self.num_classes:
+            raise ValueError(
+                f"Expected {self.num_classes} class names, "
+                f"got {len(self.class_names)}"
+            )
+
+        self.evaluate_cldice = evaluate_cldice
+        self.confusion_matrix = np.zeros(
+            (num_classes, num_classes),
+            dtype=np.int64,
+        )
         self.per_image_dice: list[dict[str, float]] = []
+
+        self.cldice_scores: dict[int, list[float]] = {
+            cls: [] for cls in range(1, num_classes)
+        }
 
     def reset(self) -> None:
         self.confusion_matrix.fill(0)
         self.per_image_dice.clear()
+        for c in self.cldice_scores:
+            self.cldice_scores[c].clear()
 
+    @torch.no_grad()
     def update(
         self,
         predictions: torch.Tensor,
@@ -31,6 +76,9 @@ class SegmentationMetrics:
     ) -> None:
         preds_np = predictions.detach().cpu().numpy().astype(np.int64)
         targets_np = targets.detach().cpu().numpy().astype(np.int64)
+
+        if preds_np.shape != targets_np.shape:
+            raise ValueError(f"Predictions and targets must have the same shape. ")
 
         B = preds_np.shape[0]
         for b in range(B):
@@ -53,7 +101,7 @@ class SegmentationMetrics:
                 self.num_classes,
             )
 
-            img_dice = {}
+            img_dice: dict[str, float] = {}
             for cls in range(self.num_classes):
                 tp = ((p_valid == cls) & (t_valid == cls)).sum()
                 fp = ((p_valid == cls) & (t_valid != cls)).sum()
@@ -62,10 +110,19 @@ class SegmentationMetrics:
                 img_dice[self.class_names[cls]] = float(dice)
             self.per_image_dice.append(img_dice)
 
+            if self.evaluate_cldice:
+                for cls in range(1, self.num_classes):
+                    pred_mask = preds_np[b] == cls
+                    target_mask = targets_np[b] == cls
+
+                    score = compute_cldice_score(pred_mask, target_mask)
+                    self.cldice_scores[cls].append(score)
+
     def compute(self) -> dict[str, float]:
         eps = 1e-7
         cm = self.confusion_matrix
         total = cm.sum()
+
         metrics: dict[str, float] = {}
 
         dice_list: list[float] = []
@@ -105,6 +162,24 @@ class SegmentationMetrics:
         metrics["Mean_Vessel_Specificity"] = float(np.mean(spec_list[1:]))
         metrics["Mean_Vessel_Precision"] = float(np.mean(precision_list[1:]))
 
+        if self.evaluate_cldice:
+            cldice_per_class: list[float] = []
+
+            for cls in range(1, self.num_classes):
+                name = self.class_names[cls]
+                scores = self.cldice_scores[cls]
+
+                if scores:
+                    mean_cldice = float(np.mean(scores))
+                else:
+                    mean_cldice = 0.0
+
+                metrics[f"{name}_clDice"] = mean_cldice
+                cldice_per_class.append(mean_cldice)
+
+            if cldice_per_class:
+                metrics["Mean_Vessel_clDice"] = float(np.mean(cldice_per_class))
+
         if self.per_image_dice:
             for cls in range(1, self.num_classes):
                 name = self.class_names[cls]
@@ -134,9 +209,15 @@ class SegmentationMetrics:
                 f"Precision={m[f'{name}_precision']:.4f}"
             )
 
+            if f"{name}_clDice" in m:
+                lines.append(f"    clDice={m[f'{name}_clDice']:.4f}")
+
         lines.append("  ──────────────────────────")
         lines.append(
             f"  Mean Vessel Dice: {m['Mean_Vessel_Dice']:.4f}  "
             f"IoU: {m['Mean_Vessel_IoU']:.4f}"
         )
+        if "Mean_Vessel_clDice" in m:
+            lines.append(f"  Mean Vessel clDice: {m['Mean_Vessel_clDice']:.4f}")
+
         return "\n".join(lines)
