@@ -14,6 +14,8 @@ class DecoderStage(nn.Module):
         skip_channel: int,
         out_channel: int,
         dropout: float = 0.0,
+        use_scse: bool = False,
+        use_attention: bool = False,
     ):
         super().__init__()
 
@@ -21,14 +23,16 @@ class DecoderStage(nn.Module):
             scale_factor=2, mode="bilinear", align_corners=False
         )
 
-        self.attention = AttentionModule(
-            gate_channels=in_channel,
-            skip_channels=skip_channel,
+        self.attention = (
+            AttentionModule(gate_channels=in_channel, skip_channels=skip_channel)
+            if use_attention
+            else None
         )
         self.conv_block = ResidualModule(
             in_channels=in_channel + skip_channel,
             out_channels=out_channel,
             dropout=dropout,
+            use_scse=use_scse,
         )
 
     def forward(self, x: torch.Tensor, skip: torch.Tensor) -> torch.Tensor:
@@ -42,7 +46,8 @@ class DecoderStage(nn.Module):
                 align_corners=False,
             )
 
-        skip = self.attention(gate=x, skip=skip)
+        if self.attention is not None:
+            skip = self.attention(gate=x, skip=skip)
         x = torch.cat([x, skip], dim=1)
         x = self.conv_block(x)
 
@@ -56,9 +61,15 @@ class Decoder(nn.Module):
         bottleneck_channel: int,
         num_classes: int = 3,
         dropout: float = 0.1,
+        use_scse: bool = False,
+        use_attention: bool = False,
+        use_deep_supervision: bool = True,
     ):
         super().__init__()
         self.num_stages = len(skip_channels)
+        self.use_scse = use_scse
+        self.use_attention = use_attention
+        self.use_deep_supervision = use_deep_supervision
 
         reversed_skips = list(reversed(skip_channels))
 
@@ -75,12 +86,15 @@ class Decoder(nn.Module):
                     skip_channel=skip_channel,
                     out_channel=out_channel,
                     dropout=dropout,
+                    use_scse=use_scse,
+                    use_attention=use_attention,
                 )
             )
             stage_out_channels.append(out_channel)
             in_channel = out_channel
 
         self.stages = nn.ModuleList(stages)
+        self.stage_out_channels = stage_out_channels
 
         self.final_conv = nn.Conv2d(
             in_channels=stage_out_channels[-1],
@@ -88,33 +102,36 @@ class Decoder(nn.Module):
             kernel_size=1,
         )
 
-        ds_heads: list[nn.Module] = []
-        for i in range(self.num_stages - 1):
-            ds_heads.append(
-                nn.Conv2d(
-                    in_channels=stage_out_channels[i],
-                    out_channels=num_classes,
-                    kernel_size=1,
+        if self.use_deep_supervision:
+            ds_heads: list[nn.Module] = []
+            for i in range(self.num_stages - 1):
+                ds_heads.append(
+                    nn.Conv2d(
+                        in_channels=stage_out_channels[i],
+                        out_channels=num_classes,
+                        kernel_size=1,
+                    )
                 )
-            )
-        self.ds_heads = nn.ModuleList(ds_heads)
+            self.ds_heads = nn.ModuleList(ds_heads)
 
     def forward(
         self,
         skips: list[torch.Tensor],
         bottleneck: torch.Tensor,
-    ) -> tuple[torch.Tensor, list[torch.Tensor]]:
+    ) -> tuple[torch.Tensor, list[torch.Tensor], list[torch.Tensor]]:
         reversed_skips = list(reversed(skips))
 
         target_size = skips[0].shape[2:]
 
         x = bottleneck
         ds_outputs: list[torch.Tensor] = []
+        stage_features: list[torch.Tensor] = []
 
         for i, stage in enumerate(self.stages):
             x = stage(x, reversed_skips[i])
+            stage_features.append(x)
 
-            if i < self.num_stages - 1:
+            if self.use_deep_supervision and i < self.num_stages - 1:
                 ds_logits = self.ds_heads[i](x)
 
                 if ds_logits.shape[2:] != target_size:
@@ -137,4 +154,4 @@ class Decoder(nn.Module):
                 align_corners=False,
             )
 
-        return segmentation, ds_outputs[::-1]
+        return segmentation, ds_outputs[::-1], stage_features

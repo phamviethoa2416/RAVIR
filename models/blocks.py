@@ -38,7 +38,14 @@ class SCSEModule(nn.Module):
 
 
 class ResidualModule(nn.Module):
-    def __init__(self, in_channels: int, out_channels: int, dropout: float = 0.0):
+    def __init__(
+        self,
+        in_channels: int,
+        out_channels: int,
+        dropout: float = 0.0,
+        use_scse: bool = False,
+        scse_reduction: int = 16,
+    ):
         super().__init__()
         self.conv1 = nn.Conv2d(
             in_channels=in_channels,
@@ -69,7 +76,11 @@ class ResidualModule(nn.Module):
         else:
             self.skip = nn.Identity()
 
-        self.scse: nn.Module = SCSEModule(out_channels)
+        self.scse: nn.Module = (
+            SCSEModule(out_channels, reduction=scse_reduction)
+            if use_scse
+            else nn.Identity()
+        )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         identity = self.skip(x)
