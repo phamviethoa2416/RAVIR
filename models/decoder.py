@@ -4,7 +4,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from models.blocks import AttentionModule, ResidualModule
+from .blocks import AttentionModule, ResidualModule
 
 
 class DecoderStage(nn.Module):
@@ -118,7 +118,7 @@ class Decoder(nn.Module):
         self,
         skips: list[torch.Tensor],
         bottleneck: torch.Tensor,
-    ) -> tuple[torch.Tensor, list[torch.Tensor], list[torch.Tensor]]:
+    ) -> tuple[torch.Tensor, list[torch.Tensor], torch.Tensor, list[torch.Tensor]]:
         reversed_skips = list(reversed(skips))
 
         target_size = skips[0].shape[2:]
@@ -144,7 +144,8 @@ class Decoder(nn.Module):
 
                 ds_outputs.append(ds_logits)
 
-        segmentation = self.final_conv(x)
+        decoder_output = x
+        segmentation = self.final_conv(decoder_output)
 
         if segmentation.shape[2:] != target_size:
             segmentation = F.interpolate(
@@ -154,4 +155,4 @@ class Decoder(nn.Module):
                 align_corners=False,
             )
 
-        return segmentation, ds_outputs[::-1], stage_features
+        return segmentation, ds_outputs[::-1], decoder_output, stage_features

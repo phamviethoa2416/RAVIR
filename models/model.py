@@ -4,6 +4,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+from .aux_recon import AuxReconHead
 from .decoder import Decoder
 from .encoder import Encoder
 from .projector import TopoProjector
@@ -11,6 +12,7 @@ from .refinement import RecursiveRefinement
 
 
 class RAVIRNet(nn.Module):
+
     def __init__(
         self,
         encoder_name: str = "resnet34",
@@ -22,12 +24,19 @@ class RAVIRNet(nn.Module):
         use_attention: bool = False,
         use_deep_supervision: bool = True,
         use_contrastive: bool = False,
+        # Contrastive Learning ───────────────────
         cgt_projector_stage_idx: int | None = 2,
         cgt_embedding_dim: int = 64,
         cgt_hidden_dim: int = 128,
+        # Recursive Refinement ───────────────────
         use_refinement: bool = False,
         refinement_iterations: int = 2,
         refinement_base_channels: int = 32,
+        # Auxiliary skeleton reconstruction
+        use_skeleton_recon: bool = False,
+        aux_mid_channels: int = 64,
+        # Auxiliary Frangi reconstruction
+        use_frangi_recon: bool = False,
     ):
         super().__init__()
 
@@ -58,6 +67,9 @@ class RAVIRNet(nn.Module):
             use_deep_supervision=use_deep_supervision,
         )
 
+        decoder_final_channels = self.decoder.final_conv.in_channels
+
+        # Projector head for Contrastive Learning ────────────
         if self.use_contrastive and cgt_projector_stage_idx is not None:
             if not (
                 0 <= cgt_projector_stage_idx < len(self.decoder.stage_out_channels)
@@ -72,6 +84,7 @@ class RAVIRNet(nn.Module):
         else:
             self.projector = None
 
+        # Recursive Refinement ────────────
         self.refinement = (
             RecursiveRefinement(
                 num_iterations=refinement_iterations,
@@ -81,6 +94,29 @@ class RAVIRNet(nn.Module):
             else None
         )
 
+        # Auxiliary skeleton reconstruction head ─────────────────
+        self.use_skeleton_recon = use_skeleton_recon
+        if self.use_skeleton_recon:
+            skeleton_out_channels = 2
+            self.skeleton_head: AuxReconHead | None = AuxReconHead(
+                in_channels=decoder_final_channels,
+                out_channels=skeleton_out_channels,
+                mid_channels=aux_mid_channels,
+            )
+        else:
+            self.skeleton_head = None
+
+        # Auxiliary Frangi reconstruction head ─────────────────
+        self.use_frangi_recon = use_frangi_recon
+        if self.use_frangi_recon:
+            self.frangi_head: AuxReconHead | None = AuxReconHead(
+                in_channels=decoder_final_channels,
+                out_channels=1,
+                mid_channels=aux_mid_channels,
+            )
+        else:
+            self.frangi_head = None
+
     def forward(
         self, x: torch.Tensor
     ) -> dict[str, torch.Tensor | list[torch.Tensor] | None]:
@@ -88,7 +124,9 @@ class RAVIRNet(nn.Module):
 
         skips, bottleneck = self.encoder(x)
 
-        segmentation, ds, stage_features = self.decoder(skips, bottleneck)
+        segmentation, ds, decoder_output, stage_features = self.decoder(
+            skips, bottleneck
+        )
 
         if segmentation.shape[2:] != input_size:
             segmentation = F.interpolate(
@@ -110,6 +148,30 @@ class RAVIRNet(nn.Module):
             "refinement": (
                 self.refinement(segmentation) if self.refinement is not None else []
             ),
+            "skeleton_recon_logits": None,
+            "frangi_recon_logits": None,
         }
+
+        if self.skeleton_head is not None:
+            skel_logits = self.skeleton_head(decoder_output)
+            if skel_logits.shape[2:] != input_size:
+                skel_logits = nn.functional.interpolate(
+                    skel_logits,
+                    size=input_size,
+                    mode="bilinear",
+                    align_corners=False,
+                )
+            outputs["skeleton_recon_logits"] = skel_logits
+
+        if self.frangi_head is not None:
+            frangi_logits = self.frangi_head(decoder_output)
+            if frangi_logits.shape[2:] != input_size:
+                frangi_logits = nn.functional.interpolate(
+                    frangi_logits,
+                    size=input_size,
+                    mode="bilinear",
+                    align_corners=False,
+                )
+            outputs["frangi_recon_logits"] = frangi_logits
 
         return outputs
