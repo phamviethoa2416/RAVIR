@@ -5,10 +5,13 @@ import os
 import numpy as np
 import torch
 from PIL import Image
+from scipy.ndimage import binary_dilation
 from skimage.filters import frangi
+from skimage.morphology import disk, skeletonize
 from torch.utils.data import Dataset
 
 from config import Config
+from transform.graph import compute_branch_labels
 
 if Config.USE_FRANGI:
     NORM_MEAN = np.array(
@@ -57,18 +60,47 @@ def compute_class_weights(
 
 def compute_frangi(
     gray: np.ndarray,
-    sigmas: tuple[int, ...] = (1, 2, 3, 4),
+    sigmas: tuple[int, ...] = (2, 3, 4, 5),
     black_ridges: bool = True,
+    norm_percentile: float = 99.7,
 ) -> np.ndarray:
+    img = gray.astype(np.float64) / 255.0
+
     response = frangi(
-        gray.astype(np.float64) / 255.0,
+        img,
         sigmas=sigmas,
         black_ridges=black_ridges,
+        alpha=Config.FRANGI_ALPHA,
+        beta=Config.FRANGI_BETA,
     )
-    vmax = response.max()
-    if vmax > 0:
-        response /= vmax
+
+    positive = response[response > 0]
+    if positive.size:
+        scale = max(float(np.percentile(positive, norm_percentile)), 1e-8)
+        response = np.clip(response / scale, 0.0, 1.0)
+    elif response.max() > 0:
+        response /= response.max()
     return response.astype(np.float32)
+
+
+def compute_skeleton(
+    class_mask: np.ndarray,
+    vessel_classes: tuple[int, ...] = (1, 2),
+    tube_radius: int = 1,
+) -> np.ndarray:
+    skeleton = np.zeros_like(class_mask, dtype=np.int32)
+    selem = disk(tube_radius) if tube_radius > 0 else None
+
+    for vessel_class in vessel_classes:
+        binary = (class_mask == vessel_class).astype(np.uint8)
+        if binary.sum() == 0:
+            continue
+        skel = skeletonize(binary > 0)
+        if selem is not None:
+            skel = binary_dilation(skel, selem)
+        skeleton[skel > 0] = vessel_class
+
+    return skeleton
 
 
 class RAVIRDataset(Dataset):
@@ -79,14 +111,31 @@ class RAVIRDataset(Dataset):
         file_list: list[str] | None = None,
         transform=None,
         is_test: bool = False,
+        skeleton_cache_dir: str | None = None,
+        tube_radius: int = 1,
         frangi_cache_dir: str | None = None,
+        return_frangi_target: bool = False,
         use_rotation_expansion: bool = False,
+        use_branch_labels: bool = False,
+        branch_crossing_radius: int = 1,
+        branch_min_pixels: int = 8,
+        branch_node_proximity: int = 5,
+        branch_small_mode: str = "merge",
     ):
         self.img_dir = img_dir
         self.mask_dir = mask_dir
         self.transform = transform
         self.is_test = is_test
+        self.skeleton_cache_dir = skeleton_cache_dir
+        self.tube_radius = tube_radius
         self.frangi_cache_dir = frangi_cache_dir
+        self.return_frangi_target = bool(return_frangi_target)
+
+        self.compute_branch_labels = bool(use_branch_labels)
+        self.branch_crossing_radius = int(branch_crossing_radius)
+        self.branch_min_pixels = int(branch_min_pixels)
+        self.branch_node_proximity = int(branch_node_proximity)
+        self.branch_small_mode = str(branch_small_mode).lower()
 
         self.file_list = (
             sorted(file_list)
@@ -104,9 +153,27 @@ class RAVIRDataset(Dataset):
         else:
             self.samples = [(filename, 0) for filename in self.file_list]
 
-        if Config.USE_FRANGI and frangi_cache_dir:
+        if skeleton_cache_dir and mask_dir and not is_test:
+            os.makedirs(skeleton_cache_dir, exist_ok=True)
+            self.precompute_skeleton()
+
+        if frangi_cache_dir and (Config.USE_FRANGI or self.return_frangi_target):
             os.makedirs(frangi_cache_dir, exist_ok=True)
             self.precompute_frangi()
+
+    def precompute_skeleton(self) -> None:
+        for filename in self.file_list:
+            cache_path = os.path.join(
+                self.skeleton_cache_dir, filename.replace(".png", "_skel.npy")
+            )
+            if os.path.exists(cache_path):
+                continue
+            raw_mask = np.array(
+                Image.open(os.path.join(self.mask_dir, filename)).convert("L")
+            )
+            class_mask = mask_to_class(raw_mask)
+            skel = compute_skeleton(class_mask, tube_radius=self.tube_radius)
+            np.save(cache_path, skel.astype(np.int32))
 
     def precompute_frangi(self) -> None:
         for filename in self.file_list:
@@ -137,6 +204,16 @@ class RAVIRDataset(Dataset):
             black_ridges=Config.FRANGI_BLACK_RIDGES,
         )
 
+    def load_skeleton(self, filename: str, class_mask: np.ndarray) -> np.ndarray:
+        if self.skeleton_cache_dir:
+            cache_path = os.path.join(
+                self.skeleton_cache_dir, filename.replace(".png", "_skel.npy")
+            )
+            if os.path.exists(cache_path):
+                return np.load(cache_path)
+
+        return compute_skeleton(class_mask, tube_radius=self.tube_radius)
+
     def __len__(self) -> int:
         return len(self.samples)
 
@@ -151,7 +228,9 @@ class RAVIRDataset(Dataset):
         image = np.stack([gray, gray, gray], axis=-1)
 
         frangi_map: np.ndarray | None = None
-        if Config.USE_FRANGI:
+        need_frangi = Config.USE_FRANGI or self.return_frangi_target
+
+        if need_frangi:
             frangi_map = self.load_frangi(filename, gray)
 
         if not self.is_test and self.mask_dir is not None:
@@ -160,22 +239,29 @@ class RAVIRDataset(Dataset):
                 dtype=np.uint8,
             )
             mask = mask_to_class(raw_mask)
+            skeleton = self.load_skeleton(filename, mask)
         else:
             mask = np.zeros(image.shape[:2], dtype=np.int32)
+            skeleton = np.zeros_like(mask)
 
         if rotation_k != 0:
             image = np.ascontiguousarray(np.rot90(image, k=rotation_k, axes=(0, 1)))
             mask = np.ascontiguousarray(np.rot90(mask, k=rotation_k, axes=(0, 1)))
+            skeleton = np.ascontiguousarray(
+                np.rot90(skeleton, k=rotation_k, axes=(0, 1))
+            )
 
             if frangi_map is not None:
                 frangi_map = np.ascontiguousarray(
                     np.rot90(frangi_map, k=rotation_k, axes=(0, 1))
                 )
 
+        frangi_target_tensor: torch.Tensor | None = None
         if self.transform:
             transform_kwargs: dict = {
                 "image": image,
                 "mask": mask,
+                "skeleton": skeleton,
             }
 
             if frangi_map is not None:
@@ -184,29 +270,86 @@ class RAVIRDataset(Dataset):
             augmented = self.transform(**transform_kwargs)
             image = augmented["image"]
             mask = augmented["mask"]
-            if not isinstance(mask, torch.Tensor):
-                mask = torch.from_numpy(mask)
-            mask = mask.long()
+            mask_np_aug = mask.numpy() if isinstance(mask, torch.Tensor) else mask
+            skeleton = torch.from_numpy(
+                compute_skeleton(
+                    mask_np_aug.astype(np.int32), tube_radius=self.tube_radius
+                )
+            ).long()
 
-            if Config.USE_FRANGI and frangi_map is not None:
-                frangi_t = augmented["frangi"].float()
-                frangi_t = (frangi_t - Config.FRANGI_NORM_MEAN) / Config.FRANGI_NORM_STD
-                image = torch.cat([image, frangi_t.unsqueeze(0)], dim=0)
+            if frangi_map is not None:
+                frangi_t_raw = augmented["frangi"].float()
+
+                if self.return_frangi_target:
+                    frangi_target_tensor = frangi_t_raw.unsqueeze(0).clone()
+
+                if Config.USE_FRANGI:
+                    frangi_t_input = (
+                        frangi_t_raw - Config.FRANGI_NORM_MEAN
+                    ) / Config.FRANGI_NORM_STD
+
+                    image = torch.cat(
+                        [image, frangi_t_input.unsqueeze(0)],
+                        dim=0,
+                    )
         else:
             rgb = image.astype(np.float32) / 255.0
             rgb = (rgb - NORM_MEAN[:3]) / NORM_STD[:3]
 
-            if Config.USE_FRANGI and frangi_map is not None:
-                frangi_norm = (frangi_map - Config.FRANGI_NORM_MEAN) / Config.FRANGI_NORM_STD
-                image = np.concatenate([rgb, frangi_norm[..., np.newaxis]], axis=-1)
+            if frangi_map is not None:
+
+                if self.return_frangi_target:
+                    frangi_target_tensor = (
+                        torch.from_numpy(np.ascontiguousarray(frangi_map))
+                        .float()
+                        .unsqueeze(0)
+                    )
+
+                if Config.USE_FRANGI:
+                    frangi_norm = (
+                        frangi_map - Config.FRANGI_NORM_MEAN
+                    ) / Config.FRANGI_NORM_STD
+
+                    image = np.concatenate(
+                        [rgb, frangi_norm[..., np.newaxis]],
+                        axis=-1,
+                    )
+                else:
+                    image = rgb
             else:
                 image = rgb
 
             image = torch.from_numpy(image.transpose(2, 0, 1))
             mask = torch.from_numpy(mask).long()
+            skeleton = torch.from_numpy(skeleton).long()
 
-        return {
+        result: dict = {
             "image": image,
             "mask": mask,
+            "skeleton": skeleton,
             "filename": filename,
         }
+
+        if frangi_target_tensor is not None:
+            result["frangi_target"] = frangi_target_tensor
+
+        if self.compute_branch_labels and not self.is_test:
+            mask_for_branch = (
+                mask.cpu().numpy().astype(np.int32)
+                if isinstance(mask, torch.Tensor)
+                else mask.astype(np.int32)
+            )
+
+            branch_np = compute_branch_labels(
+                mask_for_branch,
+                crossing_radius=self.branch_crossing_radius,
+                min_branch_pixels=self.branch_min_pixels,
+                node_proximity=self.branch_node_proximity,
+                small_component_mode=self.branch_small_mode,
+            )
+
+            result["branch_labels"] = torch.from_numpy(
+                branch_np.astype(np.int32)
+            ).long()
+
+        return result
