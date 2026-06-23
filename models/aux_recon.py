@@ -9,7 +9,7 @@ class AuxReconHead(nn.Module):
         self,
         in_channels: int,
         out_channels: int,
-        mid_channels: int,
+        mid_channels: int = 64,
     ) -> None:
         super().__init__()
 

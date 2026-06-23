@@ -10,9 +10,9 @@ from .blocks import AttentionModule, ResidualModule
 class DecoderStage(nn.Module):
     def __init__(
         self,
-        in_channel: int,
-        skip_channel: int,
-        out_channel: int,
+        in_channels: int,
+        skip_channels: int,
+        out_channels: int,
         dropout: float = 0.0,
         use_scse: bool = False,
         use_attention: bool = False,
@@ -24,13 +24,13 @@ class DecoderStage(nn.Module):
         )
 
         self.attention = (
-            AttentionModule(gate_channels=in_channel, skip_channels=skip_channel)
+            AttentionModule(gate_channels=in_channels, skip_channels=skip_channels)
             if use_attention
             else None
         )
         self.conv_block = ResidualModule(
-            in_channels=in_channel + skip_channel,
-            out_channels=out_channel,
+            in_channels=in_channels + skip_channels,
+            out_channels=out_channels,
             dropout=dropout,
             use_scse=use_scse,
         )
@@ -82,9 +82,9 @@ class Decoder(nn.Module):
             out_channel = max(in_channel // 2, min_dec_ch)
             stages.append(
                 DecoderStage(
-                    in_channel=in_channel,
-                    skip_channel=skip_channel,
-                    out_channel=out_channel,
+                    in_channels=in_channel,
+                    skip_channels=skip_channel,
+                    out_channels=out_channel,
                     dropout=dropout,
                     use_scse=use_scse,
                     use_attention=use_attention,
@@ -144,8 +144,7 @@ class Decoder(nn.Module):
 
                 ds_outputs.append(ds_logits)
 
-        decoder_output = x
-        segmentation = self.final_conv(decoder_output)
+        segmentation = self.final_conv(x)
 
         if segmentation.shape[2:] != target_size:
             segmentation = F.interpolate(
@@ -155,4 +154,4 @@ class Decoder(nn.Module):
                 align_corners=False,
             )
 
-        return segmentation, ds_outputs[::-1], decoder_output, stage_features
+        return segmentation, ds_outputs[::-1], x, stage_features
