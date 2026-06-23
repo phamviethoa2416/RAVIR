@@ -14,11 +14,6 @@ NORM_MEAN = (0.485, 0.456, 0.406)
 NORM_STD = (0.229, 0.224, 0.225)
 
 ADDITIONAL_TARGETS = {"frangi": "mask"}
-CLAHE = A.CLAHE(clip_limit=2.0, tile_grid_size=(8, 8), p=1.0)
-FINALIZE = [
-    A.Normalize(mean=NORM_MEAN, std=NORM_STD, max_pixel_value=MAX_PIXEL),
-    ToTensorV2(),
-]
 
 
 class VesselAwareCrop(A.DualTransform):
@@ -27,7 +22,7 @@ class VesselAwareCrop(A.DualTransform):
         self,
         height: int,
         width: int,
-        vessel_bias: float = 0.85,
+        vessel_bias: float = 0.7,
         vessel_labels: tuple[int, ...] = (1, 2),
         p: float = 1.0,
     ):
@@ -48,20 +43,24 @@ class VesselAwareCrop(A.DualTransform):
         if mask is not None and random.random() < self.vessel_bias:
             vessel_mask = np.isin(mask, self.vessel_labels)
             ys, xs = np.where(vessel_mask)
+
             if len(ys) > 0:
-                idx = random.randint(0, len(ys) - 1)
-                cy, cx = int(ys[idx]), int(xs[idx])
-                y1 = int(np.clip(cy - crop_height // 2, 0, height - crop_height))
-                x1 = int(np.clip(cx - crop_width // 2, 0, width - crop_width))
+                index = random.randint(0, len(ys) - 1)
+                cy, cx = int(ys[index]), int(xs[index])
+
+                y1 = np.clip(cy - crop_height // 2, 0, height - crop_height)
+                x1 = np.clip(cx - crop_width // 2, 0, width - crop_width)
+
                 return {
-                    "y1": y1,
-                    "x1": x1,
+                    "y1": int(y1),
+                    "x1": int(x1),
                     "crop_height": crop_height,
                     "crop_width": crop_width,
                 }
 
         y1 = random.randint(0, height - crop_height)
         x1 = random.randint(0, width - crop_width)
+
         return {
             "y1": y1,
             "x1": x1,
@@ -69,109 +68,132 @@ class VesselAwareCrop(A.DualTransform):
             "crop_width": crop_width,
         }
 
-    def apply(self, img, y1=0, x1=0, crop_height=0, crop_width=0, **params):
+    def apply(
+        self,
+        img: np.ndarray,
+        y1: int = 0,
+        x1: int = 0,
+        crop_height: int = 0,
+        crop_width: int = 0,
+        **params: Any,
+    ) -> np.ndarray:
         return img[y1 : y1 + crop_height, x1 : x1 + crop_width]
 
-    def apply_to_mask(self, mask, y1=0, x1=0, crop_height=0, crop_width=0, **params):
+    def apply_to_mask(
+        self,
+        mask: np.ndarray,
+        y1: int = 0,
+        x1: int = 0,
+        crop_height: int = 0,
+        crop_width: int = 0,
+        **params: Any,
+    ) -> np.ndarray:
         return mask[y1 : y1 + crop_height, x1 : x1 + crop_width]
 
-    def get_transform_init_args_names(self):
+    def get_transform_init_args_names(self) -> tuple[str, ...]:
         return "height", "width", "vessel_bias", "vessel_labels"
 
 
-def build_light_transforms() -> list[A.BasicTransform]:
-    transforms: list[A.BasicTransform] = []
-
-    if Config.IMG_SIZE < Config.ORIGINAL_SIZE:
-        transforms.append(
-            VesselAwareCrop(Config.IMG_SIZE, Config.IMG_SIZE, vessel_bias=0.7)
-        )
-
-    transforms.extend(
-        [
-            A.HorizontalFlip(p=0.5),
-            A.VerticalFlip(p=0.5),
-            A.Rotate(
-                limit=30,
-                border_mode=cv2.BORDER_CONSTANT,
-                p=0.5,
-            ),
-        ]
-    )
-
-    return transforms
-
-
-def build_full_transforms() -> list[A.BasicTransform]:
+def get_train_transform() -> A.Compose:
     transforms: list[A.BasicTransform] = []
 
     if Config.IMG_SIZE < Config.ORIGINAL_SIZE:
         transforms.append(
             VesselAwareCrop(
-                height=Config.IMG_SIZE, width=Config.IMG_SIZE, vessel_bias=0.8
+                height=Config.IMG_SIZE,
+                width=Config.IMG_SIZE,
+                vessel_bias=0.7,
             )
         )
 
-    # ── Geometric ─────────────────────────────────────────────────
+    # ── Spatial geometric ──────────────────────────────────────────
     transforms.extend(
         [
             A.HorizontalFlip(p=0.5),
             A.VerticalFlip(p=0.5),
             A.Rotate(
-                limit=30,
+                limit=180,
                 border_mode=cv2.BORDER_CONSTANT,
-                p=0.6,
+                p=0.7,
             ),
             A.Affine(
                 translate_percent={"x": (-0.04, 0.04), "y": (-0.04, 0.04)},
-                scale=(0.9, 1.1),
+                scale=(0.85, 1.15),
                 border_mode=cv2.BORDER_CONSTANT,
-                p=0.35,
-            ),
-        ]
-    )
-
-    # ── Photometric ─────────────────────────────────────────────────
-    transforms.extend(
-        [
-            A.RandomGamma(gamma_limit=(90, 110), p=0.3),
-            A.RandomBrightnessContrast(
-                brightness_limit=0.12,
-                contrast_limit=0.12,
                 p=0.4,
             ),
         ]
     )
 
-    transforms.append(A.GaussNoise(std_range=(0.01, 0.03), p=0.15))
-
-    return transforms
-
-
-def get_train_transform(intensity: str = "full") -> A.Compose:
-    if intensity not in ("full", "light"):
-        raise ValueError(f"intensity must be 'full' or 'light', got {intensity!r}")
-
-    augmentation = (
-        build_full_transforms() if intensity == "full" else build_light_transforms()
+    # ── Photometric ────────────────────────────────────────────────
+    transforms.extend(
+        [
+            A.CLAHE(
+                clip_limit=(1.0, 2.0),
+                tile_grid_size=(8, 8),
+                p=0.5,
+            ),
+            A.RandomGamma(gamma_limit=(80, 130), p=0.4),
+            A.RandomBrightnessContrast(
+                brightness_limit=0.15, contrast_limit=0.15, p=0.4
+            ),
+        ]
     )
 
-    transforms = [CLAHE] + augmentation + FINALIZE
+    # ── Noise / blur  ──────────────────────────
+    transforms.extend(
+        [
+            A.GaussianBlur(
+                blur_limit=(3, 5),
+                sigma_limit=(0.1, 0.6),
+                p=0.15,
+            ),
+            A.GaussNoise(
+                std_range=(0.01, 0.035),
+                p=0.20,
+            ),
+        ]
+    )
+
+    transforms.extend(
+        [
+            A.Normalize(mean=NORM_MEAN, std=NORM_STD, max_pixel_value=MAX_PIXEL),
+            ToTensorV2(),
+        ]
+    )
+
     return A.Compose(transforms, additional_targets=ADDITIONAL_TARGETS)
 
 
 def get_val_transform() -> A.Compose:
-    return A.Compose([CLAHE] + FINALIZE, additional_targets=ADDITIONAL_TARGETS)
+    return A.Compose(
+        [
+            A.Normalize(mean=NORM_MEAN, std=NORM_STD, max_pixel_value=MAX_PIXEL),
+            ToTensorV2(),
+        ],
+        additional_targets=ADDITIONAL_TARGETS,
+    )
 
 
 def get_test_transform() -> A.Compose:
-    return A.Compose([CLAHE] + FINALIZE, additional_targets=ADDITIONAL_TARGETS)
+    return A.Compose(
+        [
+            A.Normalize(mean=NORM_MEAN, std=NORM_STD, max_pixel_value=MAX_PIXEL),
+            ToTensorV2(),
+        ],
+        additional_targets=ADDITIONAL_TARGETS,
+    )
 
 
 def get_tta_transform() -> list[tuple[str, A.Compose]]:
+    base = [
+        A.Normalize(mean=NORM_MEAN, std=NORM_STD, max_pixel_value=MAX_PIXEL),
+        ToTensorV2(),
+    ]
+
     def _make(spatial: list[A.BasicTransform], name: str) -> tuple[str, A.Compose]:
         return name, A.Compose(
-            spatial + [CLAHE] + FINALIZE,
+            spatial + base,
             additional_targets=ADDITIONAL_TARGETS,
         )
 
@@ -184,7 +206,8 @@ def get_tta_transform() -> list[tuple[str, A.Compose]]:
         _make([A.Rotate(limit=(180, 180), p=1.0)], "rot180"),
         _make([A.Rotate(limit=(270, 270), p=1.0)], "rot270"),
         _make(
-            [A.HorizontalFlip(p=1.0), A.Rotate(limit=(90, 90), p=1.0)], "hflip_rot90"
+            [A.HorizontalFlip(p=1.0), A.Rotate(limit=(90, 90), p=1.0)],
+            "hflip_rot90",
         ),
     ]
 
