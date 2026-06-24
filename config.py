@@ -120,11 +120,14 @@ class Config:
     ORIGINAL_SIZE = 768
 
     # ── Frangi Vesselness Filter ───────────────────────────────────────────────
-    USE_FRANGI: bool = True
-    FRANGI_SIGMAS = (1, 2, 3, 4)
+    USE_FRANGI = False
+    FRANGI_SIGMAS = (2, 3, 4, 5)
     FRANGI_BLACK_RIDGES = True
-    FRANGI_NORM_MEAN = 0.1
-    FRANGI_NORM_STD = 0.2
+    FRANGI_NORM_PERCENTILE = 99.7
+    FRANGI_ALPHA = 0.5
+    FRANGI_BETA = 1.0
+    FRANGI_NORM_MEAN = 0.0375
+    FRANGI_NORM_STD = 0.1009
 
     IN_CHANNELS = 4 if USE_FRANGI else 3
 
@@ -138,7 +141,7 @@ class Config:
     # ── Model Architecture ─────────────────────────────────────────────────────
     ENCODER_NAME = "resnet34"
     ENCODER_WEIGHTS = "imagenet"
-    DROPOUT_RATE = 0.15
+    DROPOUT_RATE = 0.1
 
     # ── Training ─────────────────────────────────────────────────
     BATCH_SIZE = GPU["batch_size"]
@@ -156,31 +159,62 @@ class Config:
     LEARNING_RATE = 3e-4
     WEIGHT_DECAY = 1e-4
 
+    # ── LR Scheduler ───────────────────────────────────────────────────────────
+    LR_SCHEDULER = "cosine_warm_restarts"
+    COSINE_T0 = 50
+    COSINE_T_MULT = 2
+
     # ── Early Stopping ─────────────────────────────────────────────────────────
-    EARLY_STOPPING_PATIENCE = 80
+    EARLY_STOPPING_PATIENCE = 20
 
     # ── Segmentation Loss ──────────────────────────────────────────────────────
     DICE_WEIGHT = 1.0
     CE_WEIGHT = 1.0
-    SKELETON_WEIGHT = 1.2
+    SKELETON_WEIGHT = 1.0
     USE_DEEP_SUPERVISION = True
-    USE_CLDICE = True
-    USE_RECURSIVE_REFINEMENT = True
+    USE_SCSE = False
+    USE_ATTENTION = False
     DS_WEIGHT = 0.4
     DS_DECAY = 0.8
+    USE_CLDICE = False
     CLDICE_NUM_ITERATIONS = 10
 
+    # ── Contrastive Learning ────────────────────────────────
+    USE_CONTRASTIVE_LOSS = True
+    SEGCON_WEIGHT = 0.1
+    SEGCON_PROJECTOR_STAGE_IDX = 2
+    SEGCON_EMBEDDING_DIM = 64
+    SEGCON_HIDDEN_DIM = 128
+    SEGCON_TEMPERATURE = 0.07
+    SEGCON_NUM_ANCHORS = 256
+    SEGCON_NUM_POSITIVES = 4
+    SEGCON_NUM_NEGATIVES = 16
+    SEGCON_NEGATIVE_RADIUS = 20
+    SEGCON_CONFIDENCE_GATED = True
+    SEGCON_CONFIDENCE_GAMMA = 1.0
+    SEGCON_CONFIDENCE_DETACH = True
+    SEGCON_BRANCH_CROSSING_RADIUS = 1
+    SEGCON_BRANCH_MIN_PIXELS = 8
+    SEGCON_BRANCH_NODE_PROXIMITY = 5
+    SEGCON_BRANCH_SMALL_MODE = "merge"
+
+    # ── Frangi auxiliary head ────────────────────────────────
+    USE_FRANGI_RECON = False
+    FRANGI_RECON_WEIGHT = 0.1
+    FRANGI_RECON_LOSS = "vessel_frangi"
+    FRANGI_RECON_VESSEL_WEIGHT = 1.0
+    FRANGI_RECON_FRANGI_WEIGHT = 0.3
+    FRANGI_RECON_FRANGI_VESSEL_ONLY = True
+    AUX_DECODER_CHANNELS = 64
+
     # ── Recursive Refinement ────────────────────────────────
+    USE_RECURSIVE_REFINEMENT = False
     REFINEMENT_ITERATIONS = 2
     REFINEMENT_BASE_CHANNELS = 32
     REFINEMENT_MODE = "uniform"
     REFINEMENT_ITERATION_WEIGHT = 1.0
     REFINEMENT_BASE_SEGMENTATION_WEIGHT = 1.0
 
-    # ── 3-Phase Curriculum Training ────────────────────
-    USE_CURRICULUM_TRAINING = True
-    CURRICULUM_FIRST_PHASE_END = 50
-    CURRICULUM_SECOND_PHASE_END = 150
     # ── 4-way Rotation Expansion ────────────────────
     USE_ROTATION_EXPANSION = True
 
@@ -189,12 +223,15 @@ class Config:
     EMA_DECAY = 0.995
     EMA_WARMUP_STEPS = 50
 
+    # ── Skeleton ──────────────────────────────────────────────────────
+    TUBE_RADIUS = 1
+
     # ── Class Imbalance ────────────────────────────────────────────────────────
     USE_DYNAMIC_WEIGHTS = True
     CE_CLASS_WEIGHTS = [1.0, 2.5, 2.5]
 
     # ── Reproducibility ────────────────────────────────────────────────────────
-    SEED = 42
+    SEED = 24
 
     # ── Hardware ───────────────────────────────────────────────
     DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
@@ -204,63 +241,178 @@ class Config:
     PIN_MEMORY = GPU["pin_memory"]
     CUDNN_BENCHMARK = GPU["cudnn_benchmark"]
     ALLOW_TF32 = GPU["allow_tf32"]
-    COMPILE_MODEL = False
+    COMPILE_MODEL = True
 
     @classmethod
     def summary(cls) -> str:
         effective_batch = cls.BATCH_SIZE * cls.GRAD_ACCUMULATION_STEPS
         needs_sw = cls.IMG_SIZE < cls.ORIGINAL_SIZE
-        lines = [
-            f"  GPU            : {cls.GPU_NAME}",
-            f"  VRAM           : {cls.VRAM_GB:.1f} GB",
-            f"  Encoder        : {cls.ENCODER_NAME} "
-            f"(weights={cls.ENCODER_WEIGHTS})",
-            f"  IMG_SIZE       : {cls.IMG_SIZE}×{cls.IMG_SIZE}"
+        lines: list[str] = [
+            "── Paths ──",
+            f"  DATA_DIR         : {cls.DATA_DIR}",
+            f"  OUTPUT_DIR       : {cls.OUTPUT_DIR}",
+            f"  FRANGI_CACHE_DIR : {cls.FRANGI_CACHE_DIR}",
+            "── Dataset ──",
+            f"  Classes          : {cls.NUM_CLASSES} {cls.CLASS_NAMES}",
+            f"  IMG_SIZE         : {cls.IMG_SIZE}×{cls.IMG_SIZE}"
             + (
                 " (full-size)"
-                if cls.IMG_SIZE == 768
-                else f" (patch, sliding window for {cls.ORIGINAL_SIZE})"
+                if cls.IMG_SIZE >= cls.ORIGINAL_SIZE
+                else f" (patch; validate/inference SW for {cls.ORIGINAL_SIZE})"
             ),
-            f"  Batch Size     : {cls.BATCH_SIZE} × {cls.GRAD_ACCUMULATION_STEPS} accum = {effective_batch} effective",
-            f"  AMP            : {cls.AMP_DTYPE}"
-            + (" (disabled)" if not cls.USE_AMP else ""),
-            f"  TF32           : {'yes' if cls.ALLOW_TF32 else 'no'}",
-            f"  Loss           : CE({cls.CE_WEIGHT}) + Dice({cls.DICE_WEIGHT}) + "
-            + ("clDice" if cls.USE_CLDICE else "SkelRecall")
-            + f"({cls.SKELETON_WEIGHT})",
-            f"  Deep Supervision: {'yes' if cls.USE_DEEP_SUPERVISION else 'no'}"
+            f"  ORIGINAL_SIZE    : {cls.ORIGINAL_SIZE}",
+            f"  IN_CHANNELS      : {cls.IN_CHANNELS}",
+            f"  Rotation expand  : {'yes (4-way)' if cls.USE_ROTATION_EXPANSION else 'no'}",
+            f"  Skeleton tube radius  : {cls.TUBE_RADIUS}",
+            "── Frangi input filter ──",
+        ]
+
+        if cls.USE_FRANGI:
+            lines.append(f"  Enabled          : yes (concat as 4th channel)")
+            lines.append(f"  Sigmas           : {cls.FRANGI_SIGMAS}")
+            lines.append(f"  Black ridges     : {cls.FRANGI_BLACK_RIDGES}")
+            lines.append(f"  Alpha / Beta     : {cls.FRANGI_ALPHA} / {cls.FRANGI_BETA}")
+            lines.append(f"  Norm percentile  : {cls.FRANGI_NORM_PERCENTILE}")
+            lines.append(
+                f"  Norm mean / std  : {cls.FRANGI_NORM_MEAN} / {cls.FRANGI_NORM_STD}"
+            )
+        else:
+            lines.append("  Enabled          : no (3-channel RGB input)")
+
+        lines.append("── Model ──")
+        lines.append(
+            f"  Encoder          : {cls.ENCODER_NAME} (weights={cls.ENCODER_WEIGHTS})"
+        )
+        lines.append(f"  Dropout          : {cls.DROPOUT_RATE}")
+        lines.append(f"  SCSE decoder     : {'yes' if cls.USE_SCSE else 'no'}")
+        lines.append(f"  Attention gate   : {'yes' if cls.USE_ATTENTION else 'no'}")
+        lines.append(
+            f"  Deep supervision : {'yes' if cls.USE_DEEP_SUPERVISION else 'no'}"
             + (
                 f" (w={cls.DS_WEIGHT}, decay={cls.DS_DECAY})"
                 if cls.USE_DEEP_SUPERVISION
                 else ""
-            ),
-            f"  EMA            : {'yes' if cls.USE_EMA else 'no'}"
+            )
+        )
+        lines.append(
+            f"  Recursive Refinement    : {'yes' if cls.USE_RECURSIVE_REFINEMENT else 'no'}"
+        )
+        if cls.USE_RECURSIVE_REFINEMENT:
+            lines.append(f"    iterations     : {cls.REFINEMENT_ITERATIONS}")
+            lines.append(f"    base channels  : {cls.REFINEMENT_BASE_CHANNELS}")
+            lines.append(f"    iter mode      : {cls.REFINEMENT_MODE}")
+            lines.append(f"    iter weight    : {cls.REFINEMENT_ITERATION_WEIGHT}")
+            lines.append(
+                f"    base seg weight: {cls.REFINEMENT_BASE_SEGMENTATION_WEIGHT}"
+            )
+
+        lines.append("── Frangi auxiliary head ──")
+        if cls.USE_FRANGI_RECON:
+            lines.append("  Enabled          : yes (train-only distillation)")
+            lines.append(f"  Loss type        : {cls.FRANGI_RECON_LOSS}")
+            lines.append(f"  Weight           : {cls.FRANGI_RECON_WEIGHT}")
+            if cls.FRANGI_RECON_LOSS == "vessel_frangi":
+                lines.append(
+                    f"  Vessel / Frangi w: {cls.FRANGI_RECON_VESSEL_WEIGHT}"
+                    f" / {cls.FRANGI_RECON_FRANGI_WEIGHT}"
+                )
+                lines.append(
+                    f"  Frangi on vessel : {cls.FRANGI_RECON_FRANGI_VESSEL_ONLY}"
+                )
+            lines.append(f"  Aux mid channels : {cls.AUX_DECODER_CHANNELS}")
+        else:
+            lines.append("  Enabled          : no")
+
+        lines.append("── SegCon (contrastive learning) ──")
+        if cls.USE_CONTRASTIVE_LOSS:
+            lines.append("  Enabled          : yes")
+            lines.append(f"  Weight           : {cls.SEGCON_WEIGHT}")
+            lines.append(f"  Projector stage  : {cls.SEGCON_PROJECTOR_STAGE_IDX}")
+            lines.append(
+                f"  Embed / hidden   : {cls.SEGCON_EMBEDDING_DIM} / {cls.SEGCON_HIDDEN_DIM}"
+            )
+            lines.append(f"  Temperature τ    : {cls.SEGCON_TEMPERATURE}")
+            lines.append(
+                f"  Anchors / positive / negative: {cls.SEGCON_NUM_ANCHORS}"
+                f" / {cls.SEGCON_NUM_POSITIVES} / {cls.SEGCON_NUM_NEGATIVES}"
+            )
+            lines.append(f"  Negative radius  : {cls.SEGCON_NEGATIVE_RADIUS}")
+            lines.append(
+                f"  Confidence gated : {cls.SEGCON_CONFIDENCE_GATED}"
+                + (
+                    f" (γ={cls.SEGCON_CONFIDENCE_GAMMA}, detach={cls.SEGCON_CONFIDENCE_DETACH})"
+                    if cls.SEGCON_CONFIDENCE_GATED
+                    else ""
+                )
+            )
+            lines.append(
+                f"  Branch labels    : crossing={cls.SEGCON_BRANCH_CROSSING_RADIUS}, "
+                f"min_px={cls.SEGCON_BRANCH_MIN_PIXELS}, "
+                f"proximity={cls.SEGCON_BRANCH_NODE_PROXIMITY}, "
+                f"small={cls.SEGCON_BRANCH_SMALL_MODE}"
+            )
+        else:
+            lines.append("  Enabled          : no")
+
+        lines.append("── Training ──")
+        lines.append(f"  GPU              : {cls.GPU_NAME} ({cls.VRAM_GB:.1f} GB VRAM)")
+        lines.append(f"  Device           : {cls.DEVICE}")
+        lines.append(
+            f"  Batch            : {cls.BATCH_SIZE} × {cls.GRAD_ACCUMULATION_STEPS} accum"
+            f" = {effective_batch} effective"
+        )
+        lines.append(f"  Epochs           : {cls.EPOCHS}")
+        lines.append(f"  CV folds         : {cls.NUM_FOLDS} (val fold={cls.VAL_FOLD})")
+        lines.append(f"  Early stopping   : patience={cls.EARLY_STOPPING_PATIENCE}")
+        lines.append(f"  Seed             : {cls.SEED}")
+
+        lines.append("── Optimizer / scheduler ──")
+        lines.append(f"  LR               : {cls.LEARNING_RATE:.2e}")
+        lines.append(f"  Weight decay     : {cls.WEIGHT_DECAY:.2e}")
+        lines.append(f"  Scheduler        : {cls.LR_SCHEDULER}")
+        lines.append(f"  Warmup epochs    : {cls.WARMUP_EPOCHS}")
+        lines.append(f"  Cosine T0 / Tmult : {cls.COSINE_T0} / {cls.COSINE_T_MULT}")
+
+        lines.append("── Loss weights ──")
+        lines.append(f"  CE               : {cls.CE_WEIGHT}")
+        lines.append(f"  Dice             : {cls.DICE_WEIGHT}")
+        lines.append(
+            f"  clDice           : {'yes' if cls.USE_CLDICE else 'no'}"
+            + (
+                f" (w={cls.SKELETON_WEIGHT}, iters={cls.CLDICE_NUM_ITERATIONS})"
+                if cls.USE_CLDICE
+                else f" (w={cls.SKELETON_WEIGHT}, disabled)"
+            )
+        )
+        lines.append(
+            f"  Class weights    : "
+            + (
+                "dynamic (from train masks)"
+                if cls.USE_DYNAMIC_WEIGHTS
+                else str(cls.CE_CLASS_WEIGHTS)
+            )
+        )
+
+        lines.append("── Hardware / runtime ──")
+        lines.append(
+            f"  AMP              : {cls.AMP_DTYPE}"
+            + (" (disabled)" if not cls.USE_AMP else "")
+        )
+        lines.append(f"  TF32             : {'yes' if cls.ALLOW_TF32 else 'no'}")
+        lines.append(f"  torch.compile    : {'yes' if cls.COMPILE_MODEL else 'no'}")
+        lines.append(f"  Sliding window   : {'yes' if needs_sw else 'no'}")
+        lines.append(f"  Workers          : {cls.NUM_WORKERS}")
+        lines.append(f"  Pin memory       : {'yes' if cls.PIN_MEMORY else 'no'}")
+        lines.append(f"  cuDNN benchmark  : {'yes' if cls.CUDNN_BENCHMARK else 'no'}")
+        lines.append(
+            f"  EMA              : {'yes' if cls.USE_EMA else 'no'}"
             + (
                 f" (decay={cls.EMA_DECAY}, warmup={cls.EMA_WARMUP_STEPS} steps)"
                 if cls.USE_EMA
                 else ""
-            ),
-            f"  RR Refinement  : {'yes' if cls.USE_RECURSIVE_REFINEMENT else 'no'}"
-            + (
-                f" (K={cls.REFINEMENT_ITERATIONS}, "
-                f"base_ch={cls.REFINEMENT_BASE_CHANNELS}, "
-                f"mode={cls.REFINEMENT_MODE})"
-                if cls.USE_RECURSIVE_REFINEMENT
-                else ""
-            ),
-            f"  Curriculum     : {'yes' if cls.USE_CURRICULUM_TRAINING else 'no'}"
-            + (
-                f" (light → full → light at epoch "
-                f"{cls.CURRICULUM_FIRST_PHASE_END} / {cls.CURRICULUM_SECOND_PHASE_END})"
-                if cls.USE_CURRICULUM_TRAINING
-                else ""
-            ),
-            f"  Rotation Expand: {'yes (4-way deterministic)' if cls.USE_ROTATION_EXPANSION else 'no'}",
-            f"  Warmup epochs  : {cls.WARMUP_EPOCHS}",
-            f"  Frangi Filter  : {'yes (4 channels input)' if cls.USE_FRANGI else 'no (3 channels input)'}",
-            f"  Sliding Window : {'yes (train on patches)' if needs_sw else 'no (direct forward)'}",
-            f"  Workers        : {cls.NUM_WORKERS}",
-        ]
+            )
+        )
+
         return "\n".join(lines)
 
     @classmethod
@@ -270,3 +422,8 @@ class Config:
                 setattr(cls, key, value)
             else:
                 raise AttributeError(f"Config has no attribute '{key}'")
+        if "USE_FRANGI" in kwargs:
+            cls.IN_CHANNELS = 4 if cls.USE_FRANGI else 3
+        if "USE_FRANGI_RECON" in kwargs and cls.USE_FRANGI_RECON:
+            cls.USE_FRANGI = False
+            cls.IN_CHANNELS = 3
