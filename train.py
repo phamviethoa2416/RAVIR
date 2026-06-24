@@ -95,16 +95,28 @@ def train(args):
         f"Class weights (dynamic={Config.USE_DYNAMIC_WEIGHTS}): {class_weights.tolist()}"
     )
 
-    frangi_cache_dir = Config.FRANGI_CACHE_DIR if Config.USE_FRANGI else None
-    initial_intensity = "light" if Config.USE_CURRICULUM_TRAINING else "full"
+    frangi_cache_dir = (
+        Config.FRANGI_CACHE_DIR
+        if (Config.USE_FRANGI or Config.USE_FRANGI_RECON)
+        else None
+    )
+    if Config.USE_FRANGI_RECON:
+        Config.USE_FRANGI = False
+        Config.IN_CHANNELS = 3
 
     train_dataset = RAVIRDataset(
         img_dir=Config.TRAIN_IMG_DIR,
         mask_dir=Config.TRAIN_MASK_DIR,
         file_list=train_files,
-        transform=get_train_transform(intensity=initial_intensity),
+        transform=get_train_transform(),
         frangi_cache_dir=frangi_cache_dir,
+        return_frangi_target=Config.USE_FRANGI_RECON,
         use_rotation_expansion=Config.USE_ROTATION_EXPANSION,
+        use_branch_labels=Config.USE_CONTRASTIVE_LOSS,
+        branch_crossing_radius=Config.SEGCON_BRANCH_CROSSING_RADIUS,
+        branch_min_pixels=Config.SEGCON_BRANCH_MIN_PIXELS,
+        branch_node_proximity=Config.SEGCON_BRANCH_NODE_PROXIMITY,
+        branch_small_mode=Config.SEGCON_BRANCH_SMALL_MODE,
     )
 
     val_dataset = RAVIRDataset(
@@ -113,6 +125,12 @@ def train(args):
         file_list=val_files,
         transform=get_val_transform(),
         frangi_cache_dir=frangi_cache_dir,
+        return_frangi_target=Config.USE_FRANGI_RECON,
+        use_branch_labels=Config.USE_CONTRASTIVE_LOSS,
+        branch_crossing_radius=Config.SEGCON_BRANCH_CROSSING_RADIUS,
+        branch_min_pixels=Config.SEGCON_BRANCH_MIN_PIXELS,
+        branch_node_proximity=Config.SEGCON_BRANCH_NODE_PROXIMITY,
+        branch_small_mode=Config.SEGCON_BRANCH_SMALL_MODE,
     )
 
     train_loader = DataLoader(
@@ -145,8 +163,19 @@ def train(args):
         encoder_name=Config.ENCODER_NAME,
         in_channels=Config.IN_CHANNELS,
         num_classes=Config.NUM_CLASSES,
-        encoder_weights=Config.ENCODER_WEIGHTS if resume_checkpoint is None else None,
+        encoder_weights=Config.ENCODER_WEIGHTS,
         dropout=Config.DROPOUT_RATE,
+        use_scse=Config.USE_SCSE,
+        use_attention=Config.USE_ATTENTION,
+        use_deep_supervision=Config.USE_DEEP_SUPERVISION,
+        use_frangi_recon=Config.USE_FRANGI_RECON,
+        aux_mid_channels=Config.AUX_DECODER_CHANNELS,
+        cl_projector_stage_idx=(
+            Config.SEGCON_PROJECTOR_STAGE_IDX if Config.USE_CONTRASTIVE_LOSS else None
+        ),
+        cl_embedding_dim=Config.SEGCON_EMBEDDING_DIM,
+        cl_hidden_dim=Config.SEGCON_HIDDEN_DIM,
+        use_refinement=Config.USE_RECURSIVE_REFINEMENT,
         refinement_iterations=Config.REFINEMENT_ITERATIONS,
         refinement_base_channels=Config.REFINEMENT_BASE_CHANNELS,
     ).to(device)
@@ -171,10 +200,31 @@ def train(args):
         ds_weight=Config.DS_WEIGHT,
         ds_decay=Config.DS_DECAY,
         class_weights=class_weights,
+        use_clidce=Config.USE_CLDICE,
         cldice_num_iterations=Config.CLDICE_NUM_ITERATIONS,
+        # Contrastive Learning ───────────────────
+        segcon_weight=Config.SEGCON_WEIGHT if Config.USE_CONTRASTIVE_LOSS else 0.0,
+        segcon_temperature=Config.SEGCON_TEMPERATURE,
+        segcon_num_anchors=Config.SEGCON_NUM_ANCHORS,
+        segcon_num_positives=Config.SEGCON_NUM_POSITIVES,
+        segcon_num_negatives=Config.SEGCON_NUM_NEGATIVES,
+        segcon_negative_radius=Config.SEGCON_NEGATIVE_RADIUS,
+        segcon_confidence_gated=Config.SEGCON_CONFIDENCE_GATED,
+        segcon_confidence_gamma=Config.SEGCON_CONFIDENCE_GAMMA,
+        segcon_confidence_detach=Config.SEGCON_CONFIDENCE_DETACH,
+        # Recursive Refinement ───────────────────
+        use_refinement=Config.USE_RECURSIVE_REFINEMENT,
         refinement_mode=Config.REFINEMENT_MODE,
         refinement_iteration_weight=Config.REFINEMENT_ITERATION_WEIGHT,
         refinement_base_segmentation_weight=Config.REFINEMENT_BASE_SEGMENTATION_WEIGHT,
+        # Frangi auxiliary head ───────────────────
+        frangi_recon_weight=(
+            Config.FRANGI_RECON_WEIGHT if Config.USE_FRANGI_RECON else 0.0
+        ),
+        frangi_recon_loss=Config.FRANGI_RECON_LOSS,
+        frangi_recon_vessel_weight=Config.FRANGI_RECON_VESSEL_WEIGHT,
+        frangi_recon_frangi_weight=Config.FRANGI_RECON_FRANGI_WEIGHT,
+        frangi_recon_frangi_vessel_only=Config.FRANGI_RECON_FRANGI_VESSEL_ONLY,
     ).to(device)
 
     optimizer = AdamW(
@@ -186,7 +236,8 @@ def train(args):
     scheduler = get_scheduler(
         optimizer=optimizer,
         warmup_epochs=Config.WARMUP_EPOCHS,
-        total_epochs=Config.EPOCHS,
+        cosine_t0=Config.COSINE_T0,
+        cosine_t_mult=Config.COSINE_T_MULT,
         cosine_eta_min=1e-6,
     )
 
@@ -247,40 +298,12 @@ def train(args):
     logger.info("  Start training")
     logger.info("=" * 60)
 
-    current_intensity = "light" if Config.USE_CURRICULUM_TRAINING else "full"
-
-    def intensity_for_epoch(ep: int) -> str:
-        if not Config.USE_CURRICULUM_TRAINING:
-            return "full"
-        if ep < Config.CURRICULUM_FIRST_PHASE_END:
-            return "light"
-        if ep < Config.CURRICULUM_SECOND_PHASE_END:
-            return "full"
-        return "light"
-
     for epoch in range(start_epoch, Config.EPOCHS):
         epoch_start = time.time()
         current_lr = optimizer.param_groups[0]["lr"]
         logger.info(
             f"\nEpoch {epoch + 1}/{Config.EPOCHS}, learning rate = {current_lr:.5f}"
         )
-
-        intensity = intensity_for_epoch(epoch)
-        if intensity != current_intensity:
-            train_dataset.transform = get_train_transform(intensity=intensity)
-            phase_label = {
-                "light": (
-                    "First Phase"
-                    if epoch < Config.CURRICULUM_FIRST_PHASE_END
-                    else "Final Phase"
-                ),
-                "full": "Second Phase",
-            }[intensity]
-
-            logger.info(
-                f"Curriculum: switching to {intensity} intensity for {phase_label} (epoch {epoch + 1})"
-            )
-            current_intensity = intensity
 
         train_loss, train_details = train_one_epoch(
             model=model,
@@ -340,13 +363,13 @@ def train(args):
         )
 
         for name in Config.CLASS_NAMES:
+            d = metrics[f"{name}_dice"]
+            iou = metrics[f"{name}_iou"]
+            sens = metrics[f"{name}_sensitivity"]
+            cl = metrics.get(f"{name}_clDice", None)
+            cl_str = f"  clDice={cl:.4f}" if cl is not None else ""
             logger.info(
-                f"  {name:12s} "
-                f"Dice = {metrics[f'{name}_dice']:.4f} | "
-                f"IoU = {metrics[f'{name}_iou']:.4f} | "
-                f"Sensitivity = {metrics[f'{name}_sensitivity']:.4f} | "
-                f"Specificity = {metrics[f'{name}_specificity']:.4f} | "
-                f"Precision = {metrics[f'{name}_precision']:.4f}"
+                f"    {name:12s}  Dice={d:.4f}  IoU={iou:.4f}  Sens={sens:.4f}{cl_str}"
             )
 
         logger.info(f"  Epoch time:  {epoch_time:.1f}s")
