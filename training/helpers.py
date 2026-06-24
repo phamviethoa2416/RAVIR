@@ -4,8 +4,10 @@ import torch
 import torch.nn as nn
 from torch.amp import GradScaler
 from torch.optim import AdamW
+from typing import TYPE_CHECKING
 
-from training import EMAWeights
+if TYPE_CHECKING:
+    from .ema import EMAWeights
 
 
 def unwrap_model(model: nn.Module) -> nn.Module:
