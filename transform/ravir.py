@@ -261,7 +261,6 @@ class RAVIRDataset(Dataset):
             transform_kwargs: dict = {
                 "image": image,
                 "mask": mask,
-                "skeleton": skeleton,
             }
 
             if frangi_map is not None:
@@ -270,12 +269,19 @@ class RAVIRDataset(Dataset):
             augmented = self.transform(**transform_kwargs)
             image = augmented["image"]
             mask = augmented["mask"]
-            mask_np_aug = mask.numpy() if isinstance(mask, torch.Tensor) else mask
+            mask_np_aug = (
+                mask.cpu().numpy() if isinstance(mask, torch.Tensor) else mask
+            )
             skeleton = torch.from_numpy(
                 compute_skeleton(
                     mask_np_aug.astype(np.int32), tube_radius=self.tube_radius
                 )
             ).long()
+            mask = (
+                mask.long()
+                if isinstance(mask, torch.Tensor)
+                else torch.from_numpy(mask).long()
+            )
 
             if frangi_map is not None:
                 frangi_t_raw = augmented["frangi"].float()
