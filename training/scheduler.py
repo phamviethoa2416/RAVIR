@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from torch.optim import Optimizer
 from torch.optim.lr_scheduler import (
-    CosineAnnealingLR,
+    CosineAnnealingWarmRestarts,
     LRScheduler,
     LambdaLR,
     SequentialLR,
@@ -13,23 +13,29 @@ def get_scheduler(
     optimizer: Optimizer,
     *,
     warmup_epochs: int,
-    total_epochs: int,
+    cosine_t0: int,
+    cosine_t_mult: int,
     cosine_eta_min: float = 1e-6,
 ) -> LRScheduler:
-    cosine_epochs = max(1, total_epochs - warmup_epochs)
 
     if warmup_epochs <= 0:
-        return CosineAnnealingLR(
+        return CosineAnnealingWarmRestarts(
             optimizer,
-            T_max=cosine_epochs,
+            T_0=cosine_t0,
+            T_mult=cosine_t_mult,
             eta_min=cosine_eta_min,
         )
 
     warmup = LambdaLR(
         optimizer,
-        lr_lambda=lambda epoch: min(1.0, (epoch + 1) / float(warmup_epochs)),
+        lr_lambda=lambda epoch: float(min(1.0, (epoch + 1) / float(warmup_epochs))),
     )
-    cosine = CosineAnnealingLR(optimizer, T_max=cosine_epochs, eta_min=cosine_eta_min)
+    cosine = CosineAnnealingWarmRestarts(
+        optimizer,
+        T_0=cosine_t0,
+        T_mult=cosine_t_mult,
+        eta_min=cosine_eta_min,
+    )
 
     return SequentialLR(
         optimizer,

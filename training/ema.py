@@ -19,6 +19,9 @@ class EMAWeights:
         warmup: int = 2000,
         device: str | None = None,
     ):
+        if not (0.0 <= decay <= 1.0):
+            raise ValueError(f"Decay must be between 0 and 1, got {decay}")
+
         self.max_decay = float(decay)
         self.warmup = max(0, int(warmup))
         self.step = 0
@@ -51,7 +54,7 @@ class EMAWeights:
         self.step += 1
 
     @contextmanager
-    def swap(self, model: nn.Module) -> Iterator[None]:
+    def swap(self, model: nn.Module) -> Iterator[nn.Module]:
         unwrapped = unwrap_model(model)
         backup = {k: v.detach().clone() for k, v in unwrapped.state_dict().items()}
         unwrapped.load_state_dict(self.module.state_dict(), strict=True)
