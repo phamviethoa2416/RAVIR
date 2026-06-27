@@ -39,10 +39,7 @@ class SegmentationLoss(nn.Module):
         refinement_base_segmentation_weight: float = 1.0,
         # Frangi auxiliary head ───────────────────
         frangi_recon_weight: float = 0.0,
-        frangi_recon_loss: str = "vessel_frangi",
-        frangi_recon_vessel_weight: float = 1.0,
-        frangi_recon_frangi_weight: float = 0.5,
-        frangi_recon_frangi_vessel_only: bool = True,
+        frangi_recon_loss: str = "mse",
     ):
         super().__init__()
 
@@ -66,9 +63,6 @@ class SegmentationLoss(nn.Module):
 
         self.frangi_recon_weight = frangi_recon_weight
         self.frangi_recon_loss = frangi_recon_loss
-        self.frangi_recon_vessel_weight = frangi_recon_vessel_weight
-        self.frangi_recon_frangi_weight = frangi_recon_frangi_weight
-        self.frangi_recon_frangi_vessel_only = frangi_recon_frangi_vessel_only
 
         if class_weights is not None:
             self.register_buffer("class_weights", class_weights)
@@ -187,21 +181,14 @@ class SegmentationLoss(nn.Module):
             and frangi_target is not None
         ):
             frangi_loss_type = (
-                "mse"
-                if self.frangi_recon_loss == "vessel_frangi"
-                else self.frangi_recon_loss
+                "mse" if self.frangi_recon_loss == "vessel_frangi" else self.frangi_recon_loss
             )
-            loss_frangi_recon, frangi_parts = frangi_aux_loss(
+            loss_frangi_recon = frangi_aux_loss(
                 frangi_logits,
                 frangi_target,
                 targets,
-                vessel_weight=self.frangi_recon_vessel_weight,
-                frangi_weight=self.frangi_recon_frangi_weight,
-                frangi_on_vessel_only=self.frangi_recon_frangi_vessel_only,
                 frangi_loss_type=frangi_loss_type,
             )
-            details["frangi_recon_vessel"] = frangi_parts["vessel"].item()
-            details["frangi_recon_frangi"] = frangi_parts["frangi"].item()
 
             total = total + self.frangi_recon_weight * loss_frangi_recon
             details["frangi_recon"] = loss_frangi_recon.item()

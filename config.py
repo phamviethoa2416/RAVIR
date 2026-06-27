@@ -201,10 +201,7 @@ class Config:
     # ── Frangi auxiliary head ────────────────────────────────
     USE_FRANGI_RECON = False
     FRANGI_RECON_WEIGHT = 0.1
-    FRANGI_RECON_LOSS = "vessel_frangi"
-    FRANGI_RECON_VESSEL_WEIGHT = 1.0
-    FRANGI_RECON_FRANGI_WEIGHT = 0.3
-    FRANGI_RECON_FRANGI_VESSEL_ONLY = True
+    FRANGI_RECON_LOSS = "mse"
     AUX_DECODER_CHANNELS = 64
 
     # ── Recursive Refinement ────────────────────────────────
@@ -311,14 +308,6 @@ class Config:
             lines.append("  Enabled          : yes (train-only distillation)")
             lines.append(f"  Loss type        : {cls.FRANGI_RECON_LOSS}")
             lines.append(f"  Weight           : {cls.FRANGI_RECON_WEIGHT}")
-            if cls.FRANGI_RECON_LOSS == "vessel_frangi":
-                lines.append(
-                    f"  Vessel / Frangi w: {cls.FRANGI_RECON_VESSEL_WEIGHT}"
-                    f" / {cls.FRANGI_RECON_FRANGI_WEIGHT}"
-                )
-                lines.append(
-                    f"  Frangi on vessel : {cls.FRANGI_RECON_FRANGI_VESSEL_ONLY}"
-                )
             lines.append(f"  Aux mid channels : {cls.AUX_DECODER_CHANNELS}")
         else:
             lines.append("  Enabled          : no")

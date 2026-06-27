@@ -222,9 +222,6 @@ def train(args):
             Config.FRANGI_RECON_WEIGHT if Config.USE_FRANGI_RECON else 0.0
         ),
         frangi_recon_loss=Config.FRANGI_RECON_LOSS,
-        frangi_recon_vessel_weight=Config.FRANGI_RECON_VESSEL_WEIGHT,
-        frangi_recon_frangi_weight=Config.FRANGI_RECON_FRANGI_WEIGHT,
-        frangi_recon_frangi_vessel_only=Config.FRANGI_RECON_FRANGI_VESSEL_ONLY,
     ).to(device)
 
     optimizer = AdamW(
