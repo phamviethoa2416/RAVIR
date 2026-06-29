@@ -215,7 +215,7 @@ def build_vessel_graph(
     clean_mask = vessel_mask
     if min_mask_object_size > 1:
         clean_mask = remove_small_objects(
-            clean_mask, min_size=min_mask_object_size, connectivity=2
+            clean_mask, max_size=min_mask_object_size - 1, connectivity=2
         )
 
     mask_for_skel = clean_mask
@@ -231,7 +231,7 @@ def build_vessel_graph(
         # Remove small skeleton components
         if min_component_size > 1 and skeleton.any():
             skeleton = remove_small_objects(
-                skeleton.astype(bool), min_size=min_component_size, connectivity=2
+                skeleton.astype(bool), max_size=min_component_size - 1, connectivity=2
             )
         if int(skeleton.sum()) == before:
             break
