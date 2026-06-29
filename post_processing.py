@@ -101,6 +101,35 @@ def strip_bridge_pixels(
     return out, new_stages
 
 
+def propagation_diff_overlay(
+    before_pred: np.ndarray,
+    after_pred: np.ndarray,
+    gray: np.ndarray,
+) -> np.ndarray:
+    base = np.stack([gray, gray, gray], axis=-1).astype(np.float32) / 255.0
+    base *= 0.40
+    out = base.copy()
+
+    artery_to_vein = (before_pred == 1) & (after_pred == 2)
+    vein_to_artery = (before_pred == 2) & (after_pred == 1)
+    out[artery_to_vein] = (0.15, 0.95, 1.00)
+    out[vein_to_artery] = (1.00, 0.35, 0.95)
+
+    changed = artery_to_vein | vein_to_artery
+    if changed.any():
+        dim = ~changed
+        out[dim] *= 0.55
+
+    return np.clip(out, 0.0, 1.0)
+
+
+def _propagation_change_mask(
+    before_pred: np.ndarray,
+    after_pred: np.ndarray,
+) -> np.ndarray:
+    return (before_pred > 0) & (after_pred > 0) & (before_pred != after_pred)
+
+
 def save_visualisation(
     gray: np.ndarray,
     cnn_pred: np.ndarray,
@@ -108,8 +137,34 @@ def save_visualisation(
     filename: str,
     out_path: Path,
     bridge_mask: np.ndarray | None = None,
+    before_propagation: np.ndarray | None = None,
+    after_propagation: np.ndarray | None = None,
+    propagation_segment_mask: np.ndarray | None = None,
 ) -> None:
-    fig, axes = plt.subplots(1, 3, figsize=(16, 5.4))
+    pixel_change_mask = np.zeros_like(gray, dtype=bool)
+    if before_propagation is not None and after_propagation is not None:
+        pixel_change_mask = _propagation_change_mask(
+            before_propagation, after_propagation
+        )
+
+    segment_mask = (
+        propagation_segment_mask
+        if propagation_segment_mask is not None
+        else np.zeros_like(gray, dtype=bool)
+    )
+    focus_mask = segment_mask | pixel_change_mask
+    show_propagation = (
+        before_propagation is not None
+        and after_propagation is not None
+        and focus_mask.any()
+    )
+
+    if show_propagation:
+        fig, axes = plt.subplots(1, 4, figsize=(18, 5.4))
+        n_px = int(pixel_change_mask.sum())
+    else:
+        fig, axes = plt.subplots(1, 3, figsize=(16, 5.4))
+        n_px = 0
 
     axes[0].imshow(gray, cmap="gray")
     axes[0].set_title("IR input")
@@ -122,14 +177,31 @@ def save_visualisation(
         cnn_rgb[bridge_mask] = (255, 255, 0)
     axes[1].imshow(cnn_rgb)
     if n_bridge_pixels > 0:
-        axes[1].set_title(f"Prediction (+ {n_bridge_pixels} bridged px, yellow)")
+        axes[1].set_title(f"Prediction (+ {n_bridge_pixels} bridged px)")
     else:
         axes[1].set_title("Prediction")
     axes[1].axis("off")
 
-    axes[2].imshow(class_mask_to_rgb(final_pred))
-    axes[2].set_title("Post-processed")
-    axes[2].axis("off")
+    if show_propagation:
+        diff = propagation_diff_overlay(before_propagation, after_propagation, gray)
+        if segment_mask.any():
+            unchanged_seg = segment_mask & (~pixel_change_mask)
+            diff[unchanged_seg & (after_propagation == 1)] = (1.0, 0.25, 0.25)
+            diff[unchanged_seg & (after_propagation == 2)] = (0.25, 0.45, 1.0)
+        axes[2].imshow(diff)
+        axes[2].set_title(
+            f"Propagation diff ({n_px} relabelled px)\n"
+            "cyan A→V  magenta V→A  red/blue = segment label"
+        )
+        axes[2].axis("off")
+
+        axes[3].imshow(class_mask_to_rgb(final_pred))
+        axes[3].set_title("Post-processed (final)")
+        axes[3].axis("off")
+    else:
+        axes[2].imshow(class_mask_to_rgb(final_pred))
+        axes[2].set_title("Post-processed")
+        axes[2].axis("off")
 
     fig.suptitle(filename, fontsize=12)
     plt.tight_layout()
@@ -167,6 +239,9 @@ def save_outputs(
             filename=filename,
             out_path=vis_dir / filename,
             bridge_mask=bridge_mask,
+            before_propagation=refined.before_propagation,
+            after_propagation=refined.after_propagation,
+            propagation_segment_mask=refined.propagation_segment_mask,
         )
 
     if stages_root is not None and refined.stages:
@@ -238,6 +313,7 @@ def run_one(
         cnn_probs=cnn_probs,
         vessel_graph=graph,
         vessel_mask=vessel_mask,
+        use_branch_refinement=getattr(args, "use_branch_refine", True),
         branch_min_pixels=args.branch_min_pixels,
         branch_min_mean_prob=args.branch_min_mean_prob,
         branch_min_margin=args.branch_min_margin,
@@ -258,6 +334,9 @@ def run_one(
         branch_decisions=refined.branch_decisions,
         cnn_argmax=baseline_argmax,
         stages=refined.stages,
+        before_propagation=refined.before_propagation,
+        after_propagation=refined.after_propagation,
+        propagation_segment_mask=refined.propagation_segment_mask,
     )
 
     if bridge_pixel_mask is not None and not getattr(args, "bridge_keep_pixels", False):
@@ -272,6 +351,9 @@ def run_one(
             branch_decisions=refined.branch_decisions,
             cnn_argmax=refined.cnn_argmax,
             stages=stages,
+            before_propagation=refined.before_propagation,
+            after_propagation=refined.after_propagation,
+            propagation_segment_mask=refined.propagation_segment_mask,
         )
         if refined.stages is not None:
             refined.stages["postprocessed"] = refined.prediction.copy()

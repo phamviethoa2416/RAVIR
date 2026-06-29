@@ -234,6 +234,9 @@ class Refinement:
     branch_decisions: BranchDecisions | None = None
     cnn_argmax: np.ndarray | None = None
     stages: dict[str, np.ndarray] | None = None
+    before_propagation: np.ndarray | None = None
+    after_propagation: np.ndarray | None = None
+    propagation_segment_mask: np.ndarray | None = None
 
 
 def refinement(
@@ -241,6 +244,7 @@ def refinement(
     vessel_graph: Any,
     *,
     vessel_mask: np.ndarray | None = None,
+    use_branch_refinement: bool = True,
     branch_min_pixels: int = 15,
     branch_min_mean_prob: float = 0.45,
     branch_min_margin: float = 0.05,
@@ -274,36 +278,71 @@ def refinement(
 
     pred = cnn_argmax.copy()
     decisions: BranchDecisions | None = None
+    before_propagation = pred.copy()
+    after_propagation = pred.copy()
+    propagation_segment_mask: np.ndarray | None = None
 
-    num_branches = int(getattr(vessel_graph, "num_branches", 0))
-    decisions = compute_branch_decisions(
-        cnn_probs=cnn_probs,
-        vessel_mask=vessel_mask,
-        segment_labels=vessel_graph.segment_labels,
-        num_branches=num_branches,
-        min_branch_pixels=branch_min_pixels,
-        min_mean_prob=branch_min_mean_prob,
-        min_margin=branch_min_margin,
-        min_argmax_majority=branch_min_argmax_majority,
-        use_confidence_weights=branch_use_confidence_weights,
-    )
-    if propagate_bifurcations:
-        decisions = propagate_at_bifurcations(
-            decisions,
-            vessel_graph,
-            min_decided_neighbors=propagation_min_neighbors,
-            require_consensus=propagation_require_consensus,
-            propagation_score=propagation_score,
-            max_iterations=propagation_max_iterations,
+    if use_branch_refinement:
+        num_branches = int(getattr(vessel_graph, "num_branches", 0))
+        segment_labels = vessel_graph.segment_labels
+        decisions = compute_branch_decisions(
+            cnn_probs=cnn_probs,
+            vessel_mask=vessel_mask,
+            segment_labels=segment_labels,
+            num_branches=num_branches,
+            min_branch_pixels=branch_min_pixels,
+            min_mean_prob=branch_min_mean_prob,
+            min_margin=branch_min_margin,
+            min_argmax_majority=branch_min_argmax_majority,
+            use_confidence_weights=branch_use_confidence_weights,
         )
-    pred = apply_branch_decisions(
-        prediction=pred,
-        cnn_probs=cnn_probs,
-        vessel_mask=vessel_mask,
-        segment_labels=vessel_graph.segment_labels,
-        decisions=decisions,
-        pixel_max_confidence=branch_pixel_max_confidence,
-    )
+        before_propagation = apply_branch_decisions(
+            prediction=pred,
+            cnn_probs=cnn_probs,
+            vessel_mask=vessel_mask,
+            segment_labels=segment_labels,
+            decisions=decisions,
+            pixel_max_confidence=branch_pixel_max_confidence,
+        )
+        stages["before_propagation"] = before_propagation.copy()
+
+        propagated_branch_ids: list[int] = []
+        if propagate_bifurcations:
+            label_before_prop = decisions.label.copy()
+            decisions = propagate_at_bifurcations(
+                decisions,
+                vessel_graph,
+                min_decided_neighbors=propagation_min_neighbors,
+                require_consensus=propagation_require_consensus,
+                propagation_score=propagation_score,
+                max_iterations=propagation_max_iterations,
+            )
+            propagated_branch_ids = [
+                bid
+                for bid in range(1, num_branches + 1)
+                if label_before_prop[bid] == 0 and decisions.label[bid] > 0
+            ]
+
+        after_propagation = apply_branch_decisions(
+            prediction=pred,
+            cnn_probs=cnn_probs,
+            vessel_mask=vessel_mask,
+            segment_labels=segment_labels,
+            decisions=decisions,
+            pixel_max_confidence=branch_pixel_max_confidence,
+        )
+        pred = after_propagation.copy()
+        stages["after_propagation"] = after_propagation.copy()
+
+        if propagated_branch_ids:
+            seg = segment_labels.astype(np.int64, copy=False)
+            propagation_segment_mask = np.zeros(vessel_mask.shape, dtype=bool)
+            for bid in propagated_branch_ids:
+                propagation_segment_mask |= (seg == bid) & vessel_mask
+    else:
+        stages["before_propagation"] = before_propagation.copy()
+        stages["after_propagation"] = after_propagation.copy()
+
     stages["branch_refined"] = pred.copy()
 
     if remove_islands:
@@ -322,4 +361,7 @@ def refinement(
         branch_decisions=decisions,
         cnn_argmax=cnn_argmax,
         stages=stages,
+        before_propagation=before_propagation,
+        after_propagation=after_propagation,
+        propagation_segment_mask=propagation_segment_mask,
     )
