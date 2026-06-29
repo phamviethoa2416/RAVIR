@@ -97,7 +97,7 @@ def propagate_at_bifurcations(
     decisions: BranchDecisions,
     vessel_graph,
     *,
-    max_degree: int | None = None,
+    max_degree: int = 3,
     min_decided_neighbors: int = 2,
     require_consensus: bool = True,
     propagation_score: float = 0.30,
@@ -120,9 +120,7 @@ def propagate_at_bifurcations(
         changed = False
         for node in nodes:
             degree = int(node.get("degree", 0))
-            if degree < 1:
-                continue
-            if max_degree is not None and degree > max_degree:
+            if degree < 1 or degree > max_degree:
                 continue
             branch_ids = node.get("branches", [])
             if not branch_ids:
@@ -234,9 +232,11 @@ def remove_micro_islands(
 class Refinement:
     prediction: np.ndarray
     branch_decisions: BranchDecisions | None = None
+    cnn_argmax: np.ndarray | None = None
+    stages: dict[str, np.ndarray] | None = None
 
 
-def post_processing(
+def refinement(
     cnn_probs: np.ndarray,
     vessel_graph: Any,
     *,
@@ -270,7 +270,7 @@ def post_processing(
 
     cnn_argmax = cnn_probs.argmax(axis=0).astype(np.int32)
     cnn_argmax[~vessel_mask] = 0
-    stages: dict[str, np.ndarray] = {"cnn_argmax": cnn_argmax.copy()}
+    stages: dict[str, np.ndarray] = {"prediction": cnn_argmax.copy()}
 
     pred = cnn_argmax.copy()
     decisions: BranchDecisions | None = None
@@ -304,6 +304,7 @@ def post_processing(
         decisions=decisions,
         pixel_max_confidence=branch_pixel_max_confidence,
     )
+    stages["branch_refined"] = pred.copy()
 
     if remove_islands:
         pred = remove_micro_islands(
@@ -313,8 +314,12 @@ def post_processing(
             opposite_neighbor_threshold=island_opposite_ratio,
             dilation_radius=island_dilation_radius,
         )
+    stages["island_removed"] = pred.copy()
+    stages["postprocessed"] = pred.copy()
 
     return Refinement(
         prediction=pred,
         branch_decisions=decisions,
+        cnn_argmax=cnn_argmax,
+        stages=stages,
     )
