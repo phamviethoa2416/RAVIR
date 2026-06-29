@@ -7,7 +7,7 @@ from scipy import ndimage as ndi
 from skimage.draw import line as bresenham_line
 from skimage.morphology import dilation, disk, skeletonize
 
-from postprocessing.utils import find_endpoints, walk_branch
+from postprocessing.utils import find_endpoints, NEIGHBOR_OFFSETS
 
 W_DIST = 0.30
 W_ANGLE = 0.40
@@ -46,6 +46,37 @@ class ContinuityResult:
     num_endpoints_after: int = 0
     num_components_before: int = 0
     num_components_after: int = 0
+
+
+def walk_from_endpoint(
+    skeleton: np.ndarray,
+    start: tuple[int, int],
+    max_steps: int,
+) -> list[tuple[int, int]]:
+    h, w = skeleton.shape
+    visited: set[tuple[int, int]] = {start}
+    path: list[tuple[int, int]] = [start]
+    cy, cx = start
+
+    for _ in range(max_steps):
+        moved = False
+        for dy, dx in NEIGHBOR_OFFSETS:
+            ny, nx = cy + dy, cx + dx
+            if (
+                0 <= ny < h
+                and 0 <= nx < w
+                and skeleton[ny, nx]
+                and (ny, nx) not in visited
+            ):
+                visited.add((ny, nx))
+                path.append((ny, nx))
+                cy, cx = ny, nx
+                moved = True
+                break
+        if not moved:
+            break
+
+    return path
 
 
 def outward_tangent(path: list[tuple[int, int]]) -> np.ndarray | None:
@@ -236,7 +267,7 @@ def bridge_vessel_gaps(
     paths: dict[tuple[int, int], list[tuple[int, int]]] = {}
     tangents: dict[tuple[int, int], np.ndarray] = {}
     for ep in endpoint_set:
-        path = walk_branch(skeleton, ep, tangent_window)
+        path = walk_from_endpoint(skeleton, ep, tangent_window)
         paths[ep] = path
         tangent = outward_tangent(path)
         if tangent is not None:
@@ -288,7 +319,7 @@ def bridge_vessel_gaps(
         if target in paths:
             target_path = paths[target]
         elif target in endpoint_set:
-            target_path = walk_branch(skeleton, target, tangent_window)
+            target_path = walk_from_endpoint(skeleton, target, tangent_window)
         else:
             target_path = []
 
