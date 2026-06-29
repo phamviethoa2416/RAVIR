@@ -41,7 +41,7 @@ def graph_kwargs_from_args(args: argparse.Namespace) -> dict[str, Any]:
         "min_component_size": getattr(args, "graph_min_component_size", 15),
         "cleanup_iterations": getattr(args, "graph_cleanup_iterations", 3),
         "dilation_radius": getattr(args, "graph_dilation_radius", 2),
-        "n_pixels_for_direction": getattr(args, "graph_direction_pixels", 3),
+        "num_pixels_for_direction": getattr(args, "graph_direction_pixels", 3),
     }
 
 
