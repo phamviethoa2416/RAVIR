@@ -39,11 +39,18 @@ from utils import (
 )
 
 
-def train(args):
+def train(
+    *,
+    val_fold: int | None = None,
+    run_dir: str | None = None,
+    resume: str | None = None,
+) -> tuple[float, str]:
+    val_fold = Config.VAL_FOLD if val_fold is None else val_fold
     seed_everything(Config.SEED)
 
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    run_dir = os.path.join(Config.OUTPUT_DIR, f"run_{timestamp}")
+    if run_dir is None:
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        run_dir = os.path.join(Config.OUTPUT_DIR, f"run_{timestamp}")
     os.makedirs(run_dir, exist_ok=True)
     visualization_dir = os.path.join(run_dir, "visualizations")
     os.makedirs(visualization_dir, exist_ok=True)
@@ -62,6 +69,7 @@ def train(args):
     logger.info("  RAVIR Training")
     logger.info("=" * 60)
     logger.info(Config.summary())
+    logger.info(f"  Validation fold  : {val_fold} / {Config.NUM_FOLDS}")
     logger.info("-" * 60)
 
     all_files = sorted(
@@ -75,13 +83,11 @@ def train(args):
         random_state=Config.SEED,
     )
     folds = list(kf.split(all_files))
-    train_idx, val_idx = folds[Config.VAL_FOLD]
+    train_idx, val_idx = folds[val_fold]
     train_files = [all_files[i] for i in train_idx]
     val_files = [all_files[i] for i in val_idx]
 
-    logger.info(
-        f"Fold {Config.VAL_FOLD}: train={len(train_files)}, val={len(val_files)}"
-    )
+    logger.info(f"Fold {val_fold}: train={len(train_files)}, val={len(val_files)}")
 
     if Config.USE_DYNAMIC_WEIGHTS:
         class_weights = compute_class_weights(Config.TRAIN_MASK_DIR, train_files).to(
@@ -153,11 +159,9 @@ def train(args):
     )
 
     resume_checkpoint: dict | None = None
-    if getattr(args, "resume", None) and os.path.isfile(args.resume):
-        logger.info(f"Loading checkpoint '{args.resume}'")
-        resume_checkpoint = torch.load(
-            args.resume, map_location=device, weights_only=False
-        )
+    if resume and os.path.isfile(resume):
+        logger.info(f"Loading checkpoint '{resume}'")
+        resume_checkpoint = torch.load(resume, map_location=device, weights_only=False)
 
     model = RAVIRNet(
         encoder_name=Config.ENCODER_NAME,
