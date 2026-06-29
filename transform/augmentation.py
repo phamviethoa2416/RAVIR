@@ -112,7 +112,7 @@ def get_train_transform() -> A.Compose:
             A.HorizontalFlip(p=0.5),
             A.VerticalFlip(p=0.5),
             A.Rotate(
-                limit=180,
+                limit=30,
                 border_mode=cv2.BORDER_CONSTANT,
                 p=0.7,
             ),
