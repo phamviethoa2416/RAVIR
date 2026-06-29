@@ -42,10 +42,10 @@ class ContinuityResult:
     bridged_mask: np.ndarray
     bridge_mask: np.ndarray
     bridges: list[Bridge] = field(default_factory=list)
-    n_endpoints_before: int = 0
-    n_endpoints_after: int = 0
-    n_components_before: int = 0
-    n_components_after: int = 0
+    num_endpoints_before: int = 0
+    num_endpoints_after: int = 0
+    num_components_before: int = 0
+    num_components_after: int = 0
 
 
 def outward_tangent(path: list[tuple[int, int]]) -> np.ndarray | None:
@@ -177,15 +177,15 @@ def find_best_candidate(
             continue
 
         class_match = endpoints_class_match(cnn_probs, ep, target)
-        score = composite_score(float(d), float(max_gap), float(cos_i), evidence, class_match)
+        score = composite_score(
+            float(d), float(max_gap), float(cos_i), evidence, class_match
+        )
         if score > best_score:
             best_score = score
             best_target = target
             best_extras = {
                 "distance": float(d),
-                "angle_dev": float(
-                    np.degrees(np.arccos(np.clip(cos_i, -1.0, 1.0)))
-                ),
+                "angle_dev": float(np.degrees(np.arccos(np.clip(cos_i, -1.0, 1.0)))),
                 "evidence": evidence,
                 "class_match": class_match,
                 "score": score,
@@ -318,10 +318,10 @@ def bridge_vessel_gaps(
         bridged_mask=bridged,
         bridge_mask=bridge_pixel_mask,
         bridges=bridges,
-        n_endpoints_before=n_endpoints_before,
-        n_endpoints_after=n_endpoints_after,
-        n_components_before=n_components_before,
-        n_components_after=n_components_after,
+        num_endpoints_before=n_endpoints_before,
+        num_endpoints_after=n_endpoints_after,
+        num_components_before=n_components_before,
+        num_components_after=n_components_after,
     )
 
 
@@ -365,9 +365,9 @@ def apply_class_bias(
     if cnn_probs.ndim != 3:
         raise ValueError(f"cnn_probs must be (C, H, W); got {cnn_probs.shape}")
 
-    biases = np.array(
-        [bg_bias, artery_bias, vein_bias], dtype=cnn_probs.dtype
-    )[: cnn_probs.shape[0]]
+    biases = np.array([bg_bias, artery_bias, vein_bias], dtype=cnn_probs.dtype)[
+        : cnn_probs.shape[0]
+    ]
     scaled = cnn_probs * biases[:, None, None]
     denom = scaled.sum(axis=0, keepdims=True)
     denom = np.where(denom > 1e-12, denom, 1.0)
@@ -391,7 +391,9 @@ def image_feature(cnn_probs: np.ndarray, feature: str) -> float:
         return float((cnn_probs[1] + cnn_probs[2]).mean())
 
     vessel_mask = argmax > 0
-    return float(cnn_probs.max(axis=0)[vessel_mask].mean()) if vessel_mask.any() else 0.0
+    return (
+        float(cnn_probs.max(axis=0)[vessel_mask].mean()) if vessel_mask.any() else 0.0
+    )
 
 
 def compute_image_bg_bias(
