@@ -3,7 +3,11 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 import numpy as np
-from scipy.ndimage import distance_transform_edt, binary_closing
+from scipy.ndimage import (
+    binary_dilation,
+    distance_transform_edt,
+    binary_closing,
+)
 from skimage.measure import label as sk_label
 from skimage.morphology import disk, remove_small_objects, skeletonize
 
@@ -11,8 +15,6 @@ from postprocessing.utils import (
     NEIGHBOR_OFFSETS,
     branch_point_mask,
     endpoint_mask,
-    prune_skeleton,
-    trace_skeleton_segment,
 )
 
 
@@ -42,64 +44,107 @@ class VesselGraph:
         return [node["id"] for node in self.nodes if node["degree"] == 3]
 
 
-def _attachment_pixel(
-    ordered: list[tuple[int, int]],
-    node_pixels: list[tuple[int, int]],
-) -> tuple[int, int]:
-    if not ordered:
-        return node_pixels[0]
+def prune_skeleton(
+    skeleton: np.ndarray,
+    min_branch_length: int = 5,
+    max_iterations: int = 10,
+) -> np.ndarray:
+    if min_branch_length <= 0:
+        return skeleton.copy()
 
-    node_set = set(node_pixels)
-    for y, x in ordered:
-        if (y, x) in node_set:
-            return y, x
-        for dy, dx in NEIGHBOR_OFFSETS:
-            ny, nx = y + dy, x + dx
-            if (ny, nx) in node_set:
-                return y, x
+    skel = skeleton.astype(bool).copy()
+    H, W = skel.shape
 
-    pts_arr = np.asarray(ordered, dtype=np.float64)
-    nodes_arr = np.asarray(node_pixels, dtype=np.float64)
-    dists = ((pts_arr[:, None, :] - nodes_arr[None, :, :]) ** 2).sum(axis=2).min(axis=1)
-    return ordered[int(np.argmin(dists))]
+    for _ in range(max_iterations):
+        endpoints = endpoint_mask(skel)
+        if not endpoints.any():
+            break
+
+        branch_points = branch_point_mask(skel)
+        to_remove = np.zeros_like(skel)
+
+        for y, x in np.argwhere(endpoints):
+            path = [(int(y), int(x))]
+            prev_y, prev_x = -1, -1
+            cy, cx = int(y), int(x)
+
+            remove_path = False
+
+            for _ in range(min_branch_length):
+                next_pixel = None
+                hit_branch_point = False
+
+                for dy, dx in NEIGHBOR_OFFSETS:
+                    ny, nx = cy + dy, cx + dx
+
+                    if ny < 0 or nx < 0 or ny >= H or nx >= W:
+                        continue
+                    if not skel[ny, nx]:
+                        continue
+                    if ny == prev_y and nx == prev_x:
+                        continue
+
+                    if branch_points[ny, nx]:
+                        hit_branch_point = True
+                        break
+
+                    if next_pixel is None:
+                        next_pixel = (ny, nx)
+
+                if hit_branch_point:
+                    remove_path = True
+                    break
+
+                if next_pixel is None:
+                    if len(path) < min_branch_length:
+                        remove_path = True
+                    break
+
+                prev_y, prev_x = cy, cx
+                cy, cx = next_pixel
+                path.append((cy, cx))
+
+            if remove_path:
+                for py, px in path:
+                    to_remove[py, px] = True
+
+        if not to_remove.any():
+            break
+
+        skel &= ~to_remove
+
+    return skel
 
 
 def compute_branch_directions(
     branch_pixels: list[tuple[int, int]] | np.ndarray,
-    node_a_pixels: list[tuple[int, int]] | None = None,
-    node_b_pixels: list[tuple[int, int]] | None = None,
-    num_pixels_for_direction: int = 5,
+    node_a_yx: tuple[float, float] | None = None,
+    node_b_yx: tuple[float, float] | None = None,
+    n_pixels_for_direction: int = 5,
 ) -> tuple[float, float]:
     pixels = np.asarray(branch_pixels, dtype=np.int32)
     if pixels.ndim != 2 or pixels.shape[1] != 2 or pixels.shape[0] == 0:
         return 0.0, 0.0
 
-    ordered = [(int(y), int(x)) for y, x in pixels]
-    k = int(max(2, min(num_pixels_for_direction, len(ordered))))
-    head = ordered[:k]
-    tail = ordered[-k:]
+    k = int(max(2, min(n_pixels_for_direction, pixels.shape[0])))
+    head = pixels[:k]
+    tail = pixels[-k:]
 
-    if node_a_pixels:
-        origin_a = np.asarray(
-            _attachment_pixel(ordered[: max(k, 3)], node_a_pixels),
-            dtype=np.float64,
-        )
-    else:
-        origin_a = np.asarray(head[0], dtype=np.float64)
+    origin_a = (
+        np.asarray(node_a_yx, dtype=np.float64)
+        if node_a_yx is not None
+        else head[0].astype(np.float64)
+    )
 
-    if node_b_pixels:
-        origin_b = np.asarray(
-            _attachment_pixel(ordered[-max(k, 3) :], node_b_pixels),
-            dtype=np.float64,
-        )
-    else:
-        origin_b = np.asarray(tail[-1], dtype=np.float64)
+    origin_b = (
+        np.asarray(node_b_yx, dtype=np.float64)
+        if node_b_yx is not None
+        else tail[-1].astype(np.float64)
+    )
 
-    head_end = np.asarray(head[-1], dtype=np.float64)
-    tail_start = np.asarray(tail[0], dtype=np.float64)
-    dy_a, dx_a = head_end - origin_a
+    dy_a, dx_a = head[-1].astype(np.float64) - origin_a
     angle_a = float(np.arctan2(dy_a, dx_a))
-    dy_b, dx_b = tail_start - origin_b
+    dy_b, dx_b = tail[0].astype(np.float64) - origin_b
     angle_b = float(np.arctan2(dy_b, dx_b))
 
     return angle_a, angle_b
@@ -111,22 +156,33 @@ def assign_vessel_pixels(
     dilation_radius: int = 2,
 ) -> np.ndarray:
     vessel_mask = vessel_mask.astype(bool)
-    skeleton_labels = branch_labels.astype(np.int32, copy=False)
-    if not vessel_mask.any() or not (skeleton_labels > 0).any():
-        return np.zeros_like(skeleton_labels, dtype=np.int32)
-
-    dist, nearest_idx = distance_transform_edt(
-        ~(skeleton_labels > 0),
-        return_distances=True,
-        return_indices=True,
-    )
-    assigned = skeleton_labels[nearest_idx[0], nearest_idx[1]].astype(np.int32)
+    segmentation = branch_labels.astype(np.int32).copy()
+    segmentation[~vessel_mask] = 0
 
     if dilation_radius > 0:
-        assigned = np.where(dist <= float(dilation_radius), assigned, 0)
+        selem = disk(dilation_radius)
+        dilated = np.zeros_like(segmentation)
+        n_branches = int(segmentation.max())
+        for branch_id in range(1, n_branches + 1):
+            m = (
+                binary_dilation(segmentation == branch_id, structure=selem)
+                & vessel_mask
+            )
+            dilated[m & (dilated == 0)] = branch_id
+        segmentation = dilated
 
-    segmentation = np.where(vessel_mask, assigned, 0).astype(np.int32)
-    return segmentation
+    unlabeled = (segmentation == 0) & vessel_mask
+    if unlabeled.any() and (segmentation > 0).any():
+        _, nearest_idx = distance_transform_edt(
+            segmentation == 0,
+            return_distances=True,
+            return_indices=True,
+        )
+        filled = segmentation[nearest_idx[0], nearest_idx[1]]
+        segmentation = np.where(unlabeled, filled, segmentation)
+
+    segmentation[~vessel_mask] = 0
+    return segmentation.astype(np.int32)
 
 
 def build_vessel_graph(
@@ -333,7 +389,7 @@ def build_vessel_graph(
 
     if not np.array_equal(branch_pts_new, branch_pts):
         branch_pts = branch_pts_new
-        # Rebuild node labels after demotion (inline _label_nodes again).
+        # Rebuild node labels after demotion.
         node_labels = np.zeros((H, W), dtype=np.int32)
         bp_components = sk_label(branch_pts, connectivity=2).astype(np.int32)
         n_bp_components = int(bp_components.max())
@@ -368,44 +424,6 @@ def build_vessel_graph(
 
     branches: list[dict] = []
     branch_labels = np.zeros((H, W), dtype=np.int32)
-    seen_segments: set[tuple[int, int, frozenset[tuple[int, int]]]] = set()
-
-    def _register_branch(
-        ordered: list[tuple[int, int]],
-        node_a_id: int | None,
-        node_b_id: int | None,
-    ) -> None:
-        if not ordered:
-            return
-
-        branch_id = len(branches) + 1
-        for py, px in ordered:
-            branch_labels[py, px] = branch_id
-
-        node_a_pixels = nodes[node_a_id]["pixels"] if node_a_id is not None else None
-        node_b_pixels = nodes[node_b_id]["pixels"] if node_b_id is not None else None
-        angle_a, angle_b = compute_branch_directions(
-            ordered,
-            node_a_pixels=node_a_pixels,
-            node_b_pixels=node_b_pixels,
-            num_pixels_for_direction=num_pixels_for_direction,
-        )
-        ys_w, xs_w = zip(*ordered)
-        widths_arr = dist_map[list(ys_w), list(xs_w)] * 2.0
-        branch_width = float(np.median(widths_arr))
-
-        branches.append(
-            {
-                "id": branch_id,
-                "node_a": node_a_id,
-                "node_b": node_b_id,
-                "pixels": ordered,
-                "length": len(ordered),
-                "direction_a": angle_a,
-                "direction_b": angle_b,
-                "width": branch_width,
-            }
-        )
 
     for cid in range(1, n_components + 1):
         component = comp_labels == cid
@@ -413,16 +431,25 @@ def build_vessel_graph(
         touching: dict[int, set[tuple[int, int]]] = {}
         ys, xs = np.where(component)
         for y, x in zip(ys, xs):
+            per_pixel_nodes: set[int] = set()
             for dy, dx in NEIGHBOR_OFFSETS:
                 ny, nx = y + dy, x + dx
                 if 0 <= ny < H and 0 <= nx < W:
                     nl = int(node_labels[ny, nx])
                     if nl > 0:
-                        touching.setdefault(nl, set()).add((int(y), int(x)))
+                        per_pixel_nodes.add(nl)
+            for nl in per_pixel_nodes:
+                touching.setdefault(nl, set()).add((int(y), int(x)))
 
         touching_ids = sorted(touching.keys())
-
-        if not touching_ids:
+        if len(touching_ids) >= 2:
+            node_a_id = touching_ids[0] - 1
+            node_b_id = touching_ids[1] - 1
+        elif len(touching_ids) == 1:
+            only_node = touching_ids[0] - 1
+            node_a_id = only_node
+            node_b_id = only_node if len(touching[touching_ids[0]]) >= 2 else None
+        else:
             y0, x0 = int(ys[0]), int(xs[0])
             n_nodes += 1
             synth_id = n_nodes
@@ -437,38 +464,89 @@ def build_vessel_graph(
                     "pixels": [(y0, x0)],
                 }
             )
-            loop_pixels = [
-                (int(y), int(x))
-                for y, x in zip(*np.where(component))
-                if not (int(y) == y0 and int(x) == x0)
-            ]
-            if loop_pixels:
-                _register_branch(loop_pixels, synth_id - 1, synth_id - 1)
+            component[y0, x0] = False
+            node_a_id = synth_id - 1
+            node_b_id = synth_id - 1
+
+        preferred_start_node = touching_ids[0] if touching_ids else None
+        pys, pxs = np.where(component)
+        if len(pys) == 0:
+            ordered: list[tuple[int, int]] = []
+        elif len(pys) == 1:
+            ordered = [(int(pys[0]), int(pxs[0]))]
+        else:
+            start: tuple[int, int] | None = None
+            fallback: tuple[int, int] | None = None
+            for py, px in zip(pys, pxs):
+                touches: set[int] = set()
+                for dy, dx in NEIGHBOR_OFFSETS:
+                    ny, nx = py + dy, px + dx
+                    if 0 <= ny < H and 0 <= nx < W and node_labels[ny, nx] > 0:
+                        touches.add(int(node_labels[ny, nx]))
+                if preferred_start_node is not None and preferred_start_node in touches:
+                    start = (int(py), int(px))
+                    break
+                if fallback is None and touches:
+                    fallback = (int(py), int(px))
+            if start is None:
+                start = fallback if fallback is not None else (int(pys[0]), int(pxs[0]))
+
+            ordered = [start]
+            visited = np.zeros_like(component)
+            visited[start] = True
+            cy_walk, cx_walk = start
+            while True:
+                nxt: tuple[int, int] | None = None
+                for dy, dx in NEIGHBOR_OFFSETS:
+                    ny, nx = cy_walk + dy, cx_walk + dx
+                    if (
+                        0 <= ny < H
+                        and 0 <= nx < W
+                        and component[ny, nx]
+                        and not visited[ny, nx]
+                    ):
+                        nxt = (ny, nx)
+                        break
+                if nxt is None:
+                    break
+                ordered.append(nxt)
+                visited[nxt] = True
+                cy_walk, cx_walk = nxt
+
+        if not ordered:
             continue
 
-        for start_node_lbl in touching_ids:
-            for start_px in touching[start_node_lbl]:
-                ordered, end_node_lbl = trace_skeleton_segment(
-                    component,
-                    node_labels,
-                    start_px,
-                    start_node_lbl,
-                )
-                if not ordered:
-                    continue
+        branch_id = len(branches) + 1
+        branch_labels[component] = branch_id
 
-                node_a_id = start_node_lbl - 1
-                node_b_id = (end_node_lbl - 1) if end_node_lbl is not None else None
-                end_lbl = end_node_lbl if end_node_lbl is not None else start_node_lbl
-                seg_key = (
-                    min(start_node_lbl, end_lbl),
-                    max(start_node_lbl, end_lbl),
-                    frozenset(ordered),
-                )
-                if seg_key in seen_segments:
-                    continue
-                seen_segments.add(seg_key)
-                _register_branch(ordered, node_a_id, node_b_id)
+        node_a_pos = nodes[node_a_id]["position"] if node_a_id is not None else None
+        node_b_pos = nodes[node_b_id]["position"] if node_b_id is not None else None
+        angle_a, angle_b = compute_branch_directions(
+            ordered,
+            node_a_yx=node_a_pos,
+            node_b_yx=node_b_pos,
+            n_pixels_for_direction=num_pixels_for_direction,
+        )
+
+        if ordered:
+            ys_w, xs_w = zip(*ordered)
+            widths_arr = dist_map[list(ys_w), list(xs_w)] * 2.0
+            branch_width = float(np.median(widths_arr))
+        else:
+            branch_width = 0.0
+
+        branches.append(
+            {
+                "id": branch_id,
+                "node_a": node_a_id,
+                "node_b": node_b_id,
+                "pixels": ordered,
+                "length": len(ordered),
+                "direction_a": angle_a,
+                "direction_b": angle_b,
+                "width": branch_width,
+            }
+        )
 
     # ── 8. Zero-length branches between directly adjacent nodes ─────────────
     seen_node_pairs: set[tuple[int, int]] = set()
